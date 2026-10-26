@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
+from flask_socketio import SocketIO, join_room, leave_room, emit
 from database import (
     init_database, create_user, get_user_by_username,
     get_user_by_email, get_user_by_id, save_game_result,
@@ -7,6 +8,8 @@ from database import (
 )
 
 app = Flask(__name__)
+app.config['SECRET_KEY'] = 'secret!' # برای WebSocket لازمه
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 @app.after_request
 def add_cors_headers(response):
@@ -26,32 +29,23 @@ def register():
     data = request.get_json()
     if not data:
         return jsonify({"error": "داده‌ای ارسال نشد!"}), 400
-
     username = data.get("username", "").strip()
     email = data.get("email", "").strip()
     password = data.get("password", "")
-
     if not username or not email or not password:
         return jsonify({"error": "همه فیلدها الزامی است!"}), 400
-
     if len(username) < 3:
         return jsonify({"error": "نام کاربری باید حداقل ۳ کاراکتر باشد!"}), 400
-
     if len(password) < 6:
         return jsonify({"error": "رمز عبور باید حداقل ۶ کاراکتر باشد!"}), 400
-
     if get_user_by_username(username):
         return jsonify({"error": "این نام کاربری قبلاً گرفته شده!"}), 400
-
     if get_user_by_email(email):
         return jsonify({"error": "این ایمیل قبلاً ثبت شده!"}), 400
-
     password_hash = generate_password_hash(password)
     user_id = create_user(username, email, password_hash)
-
     if not user_id:
         return jsonify({"error": "خطا در ساخت حساب!"}), 500
-
     return jsonify({
         "message": "ثبت‌نام موفق!",
         "user": {"id": user_id, "username": username, "email": email}
@@ -62,21 +56,15 @@ def login():
     data = request.get_json()
     if not data:
         return jsonify({"error": "داده‌ای ارسال نشد!"}), 400
-
     username = data.get("username", "").strip()
     password = data.get("password", "")
-
     if not username or not password:
         return jsonify({"error": "همه فیلدها الزامی است!"}), 400
-
     user = get_user_by_username(username)
-
     if not user:
         return jsonify({"error": "کاربری با این نام پیدا نشد!"}), 401
-
     if not check_password_hash(user["password_hash"], password):
         return jsonify({"error": "رمز عبور اشتباه است!"}), 401
-
     return jsonify({
         "message": "ورود موفق!",
         "user": {"id": user["id"], "username": user["username"], "email": user["email"]}
@@ -88,10 +76,7 @@ def get_user(user_id):
     if not user:
         return jsonify({"error": "کاربر پیدا نشد!"}), 404
     return jsonify({
-        "id": user["id"],
-        "username": user["username"],
-        "email": user["email"],
-        "created_at": user["created_at"]
+        "id": user["id"], "username": user["username"], "email": user["email"], "created_at": user["created_at"]
     }), 200
 
 @app.route("/api/save-result", methods=["POST"])
@@ -99,16 +84,13 @@ def save_result():
     data = request.get_json()
     if not data:
         return jsonify({"error": "داده‌ای ارسال نشد!"}), 400
-
     user_id = data.get("user_id")
     score = data.get("score")
     rank = data.get("rank")
     players = data.get("players")
     rounds = data.get("rounds")
-
     if not all([user_id, score is not None, rank, players, rounds]):
         return jsonify({"error": "همه فیلدها الزامی است!"}), 400
-
     save_game_result(user_id, score, rank, players, rounds)
     return jsonify({"message": "نتیجه ذخیره شد!"}), 201
 
@@ -122,8 +104,32 @@ def get_stats(user_id):
     stats = get_user_stats(user_id)
     return jsonify({"stats": stats}), 200
 
+
+# --- Socket.IO Events for Rooms ---
+
+@socketio.on('create_room')
+def handle_create_room(data):
+    room_code = data.get('room_code')
+    username = data.get('username')
+    if not room_code or not username:
+        emit('error', {'message': 'اطلاعات ناقص است'})
+        return
+    join_room(room_code)
+    emit('room_created', {'room_code': room_code, 'message': f'اتاق {room_code} ساخته شد'}, room=room_code)
+
+@socketio.on('join_room')
+def handle_join_room(data):
+    room_code = data.get('room_code')
+    username = data.get('username')
+    if not room_code or not username:
+        emit('error', {'message': 'اطلاعات ناقص است'})
+        return
+    join_room(room_code)
+    emit('room_joined', {'room_code': room_code, 'username': username, 'message': f'{username} وارد اتاق شد'}, room=room_code)
+    emit('player_joined', {'username': username}, room=room_code, include_self=False)
+
+
 if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 5000))
-    app.run(debug=False, host="0.0.0.0", port=port)
-    
+    socketio.run(app, debug=False, host="0.0.0.0", port=port, allow_unsafe_werkzeug=True)
