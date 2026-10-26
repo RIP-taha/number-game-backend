@@ -26,23 +26,32 @@ def register():
     data = request.get_json()
     if not data:
         return jsonify({"error": "داده‌ای ارسال نشد!"}), 400
+
     username = data.get("username", "").strip()
     email = data.get("email", "").strip()
     password = data.get("password", "")
+
     if not username or not email or not password:
         return jsonify({"error": "همه فیلدها الزامی است!"}), 400
+
     if len(username) < 3:
         return jsonify({"error": "نام کاربری باید حداقل ۳ کاراکتر باشد!"}), 400
-    if len(password) < 8:
-        return jsonify({"error": "رمز باید حداقل ۸ کاراکتر باشد!"}), 400
+
+    if len(password) < 6:
+        return jsonify({"error": "رمز عبور باید حداقل ۶ کاراکتر باشد!"}), 400
+
     if get_user_by_username(username):
         return jsonify({"error": "این نام کاربری قبلاً گرفته شده!"}), 400
+
     if get_user_by_email(email):
         return jsonify({"error": "این ایمیل قبلاً ثبت شده!"}), 400
+
     password_hash = generate_password_hash(password)
     user_id = create_user(username, email, password_hash)
+
     if not user_id:
         return jsonify({"error": "خطا در ساخت حساب!"}), 500
+
     return jsonify({
         "message": "ثبت‌نام موفق!",
         "user": {"id": user_id, "username": username, "email": email}
@@ -53,15 +62,21 @@ def login():
     data = request.get_json()
     if not data:
         return jsonify({"error": "داده‌ای ارسال نشد!"}), 400
+
     username = data.get("username", "").strip()
     password = data.get("password", "")
+
     if not username or not password:
         return jsonify({"error": "همه فیلدها الزامی است!"}), 400
+
     user = get_user_by_username(username)
+
     if not user:
         return jsonify({"error": "کاربری با این نام پیدا نشد!"}), 401
+
     if not check_password_hash(user["password_hash"], password):
         return jsonify({"error": "رمز عبور اشتباه است!"}), 401
+
     return jsonify({
         "message": "ورود موفق!",
         "user": {"id": user["id"], "username": user["username"], "email": user["email"]}
@@ -84,13 +99,16 @@ def save_result():
     data = request.get_json()
     if not data:
         return jsonify({"error": "داده‌ای ارسال نشد!"}), 400
+
     user_id = data.get("user_id")
     score = data.get("score")
     rank = data.get("rank")
     players = data.get("players")
     rounds = data.get("rounds")
+
     if not all([user_id, score is not None, rank, players, rounds]):
         return jsonify({"error": "همه فیلدها الزامی است!"}), 400
+
     save_game_result(user_id, score, rank, players, rounds)
     return jsonify({"message": "نتیجه ذخیره شد!"}), 201
 
@@ -108,3 +126,4 @@ if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=False, host="0.0.0.0", port=port)
+    
