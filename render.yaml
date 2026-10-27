@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: number-game-api
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT -k geventwebsocket.gunicorn.workers.GeventWebSocketWorker -w 1 app:app

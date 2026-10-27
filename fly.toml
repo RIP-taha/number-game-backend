@@ -1,18 +1,14 @@
-# fly.toml app configuration file generated for number-game-api on 2026-10-26T17:49:31+03:30
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
-
 app = 'number-game-api'
 primary_region = 'fra'
 
 [build]
+
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = 'stop'
+  auto_stop_machines = false
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
   processes = ['app']
 
 [[vm]]
@@ -20,3 +16,4 @@ primary_region = 'fra'
   cpu_kind = 'shared'
   cpus = 1
   memory_mb = 256
+  
