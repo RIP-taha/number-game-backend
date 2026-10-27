@@ -8,6 +8,7 @@ from database import (
 )
 import random
 import os
+import time
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret!'
@@ -74,9 +75,30 @@ def get_results(user_id): return jsonify({"results": get_user_results(user_id)})
 def get_stats(user_id): return jsonify({"stats": get_user_stats(user_id)}), 200
 
 
-# --- Socket.IO Events for Rooms and Game ---
+# --- Socket.IO Events ---
 rooms_data = {}
 games_data = {}
+
+# بانک سوالات ریاضی
+easy_questions = []
+for a in range(1, 11):
+    for b in range(1, 11):
+        if a + b <= 20: easy_questions.append((f"{a} + {b}", a + b))
+medium_questions = []
+for a in range(1, 21):
+    for b in range(1, 21):
+        if 1 <= a - b <= 20: medium_questions.append((f"{a} - {b}", a - b))
+hard_questions = []
+for a in range(1, 21):
+    for b in range(1, 21):
+        if a * b <= 20: hard_questions.append((f"{a} × {b}", a * b))
+
+def get_new_question():
+    level = random.choice(["easy", "medium", "hard"])
+    if level == "easy": q, ans = random.choice(easy_questions); t = 7
+    elif level == "medium": q, ans = random.choice(medium_questions); t = 10
+    else: q, ans = random.choice(hard_questions); t = 15
+    return {"question": q, "answer": ans, "time_limit": t}
 
 @socketio.on('create_room')
 def handle_create_room(data):
@@ -102,7 +124,6 @@ def handle_join_room(data):
     emit('update_players', {'players': rooms_data[room_code]}, room=room_code)
     emit('player_joined', {'username': username}, room=room_code, include_self=False)
     
-    # اگه بازی در جریان هست، وضعیت رو برای نفر جدید هم بفرست
     if room_code in games_data:
         emit('update_game_state', {'state': games_data[room_code]}, room=room_code)
 
@@ -113,14 +134,26 @@ def handle_start_game(data):
         players = rooms_data[room_code]
         num_rounds = 5
         
+        rounds_with_math = []
+        for _ in range(num_rounds):
+            rounds_with_math.append(random.random() < 0.3)
+
         games_data[room_code] = {
             'players': [{'name': p, 'score': 0, 'numbers': [0]*num_rounds} for p in players],
             'num_rounds': num_rounds,
             'current_round': 0,
             'current_player_idx': 0,
-            'rounds_with_math': [random.random() < 0.3 for _ in range(num_rounds)]
+            'rounds_with_math': rounds_with_math,
+            'current_question': None,
+            'round_start_time': None,
+            'question_answered': False
         }
         
+        # آماده‌سازی دست اول
+        if rounds_with_math[0]:
+            games_data[room_code]['current_question'] = get_new_question()
+            games_data[room_code]['round_start_time'] = time.time()
+            
         emit('game_started', {'room_code': room_code, 'players': players}, room=room_code)
         emit('update_game_state', {'state': games_data[room_code]}, room=room_code)
 
@@ -138,10 +171,27 @@ def handle_submit_number(data):
     
     player_idx = game['current_player_idx']
     game['players'][player_idx]['numbers'][game['current_round']] = number
+    
+    # بررسی سوال ریاضی
+    if game['rounds_with_math'][game['current_round']] and game['current_question']:
+        if not game['question_answered']:
+            elapsed = time.time() - game['round_start_time']
+            if elapsed <= game['current_question']['time_limit'] and number == game['current_question']['answer']:
+                game['players'][player_idx]['score'] += 2
+            game['question_answered'] = True
+    
     game['current_player_idx'] += 1
     
     if game['current_player_idx'] >= len(game['players']):
         end_round_logic(game)
+        # آماده‌سازی دست بعدی
+        if game['current_round'] < game['num_rounds']:
+            if game['rounds_with_math'][game['current_round']]:
+                game['current_question'] = get_new_question()
+                game['round_start_time'] = time.time()
+                game['question_answered'] = False
+            else:
+                game['current_question'] = None
     
     emit('update_game_state', {'state': game}, room=room_code)
 
