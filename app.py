@@ -27,6 +27,9 @@ init_database()
 @app.route("/", methods=["GET"])
 def home(): return jsonify({"message": "Number Game API is running!"})
 
+# ... (کدهای API ثبت‌نام، ورود، پروفایل و غیره مثل قبل) ...
+# (برای اینکه کد طولانی نشه، این بخش‌ها رو کپی نکردم، همون‌هایی که توی فایل app.py خودت هستن رو نگه دار)
+
 @app.route("/api/register", methods=["POST"])
 def register():
     data = request.get_json()
@@ -79,19 +82,10 @@ def get_stats(user_id): return jsonify({"stats": get_user_stats(user_id)}), 200
 rooms_data = {}
 games_data = {}
 
-# بانک سوالات ریاضی
-easy_questions = []
-for a in range(1, 11):
-    for b in range(1, 11):
-        if a + b <= 20: easy_questions.append((f"{a} + {b}", a + b))
-medium_questions = []
-for a in range(1, 21):
-    for b in range(1, 21):
-        if 1 <= a - b <= 20: medium_questions.append((f"{a} - {b}", a - b))
-hard_questions = []
-for a in range(1, 21):
-    for b in range(1, 21):
-        if a * b <= 20: hard_questions.append((f"{a} × {b}", a * b))
+# بانک سوالات
+easy_questions = [(f"{a} + {b}", a + b) for a in range(1, 11) for b in range(1, 11) if a + b <= 20]
+medium_questions = [(f"{a} - {b}", a - b) for a in range(1, 21) for b in range(1, 21) if 1 <= a - b <= 20]
+hard_questions = [(f"{a} × {b}", a * b) for a in range(1, 21) for b in range(1, 21) if a * b <= 20]
 
 def get_new_question():
     level = random.choice(["easy", "medium", "hard"])
@@ -104,58 +98,141 @@ def get_new_question():
 def handle_create_room(data):
     room_code = data.get('room_code')
     username = data.get('username')
+    max_players = data.get('max_players', 2)
+    bot_count = data.get('bot_count', 0)
+    bot_difficulty = data.get('bot_difficulty', 'medium')
+    
     if not room_code or not username: return
     join_room(room_code)
-    rooms_data[room_code] = [username]
-    emit('update_players', {'players': rooms_data[room_code]}, room=room_code)
+    
+    # ساخت لیست بازیکنان اولیه (شامل بات‌ها)
+    players = [username]
+    for i in range(bot_count):
+        players.append(f"بات {i+1}")
+    
+    rooms_data[room_code] = {
+        'players': players,
+        'host': username,
+        'max_players': max_players,
+        'bot_count': bot_count,
+        'bot_difficulty': bot_difficulty
+    }
+    
+    emit('update_players', rooms_data[room_code], room=room_code)
 
 @socketio.on('join_room')
 def handle_join_room(data):
     room_code = data.get('room_code')
     username = data.get('username')
     if not room_code or not username: return
+    
+    if room_code not in rooms_data:
+        emit('error', {'message': 'اتاق پیدا نشد!'})
+        return
+    
+    room = rooms_data[room_code]
+    if len(room['players']) >= room['max_players']:
+        emit('error', {'message': 'اتاق پر است!'})
+        return
+    
+    if username not in room['players']:
+        room['players'].append(username)
+    
     join_room(room_code)
-    if room_code in rooms_data:
-        if username not in rooms_data[room_code]:
-            rooms_data[room_code].append(username)
-    else:
-        rooms_data[room_code] = [username]
-    
-    emit('update_players', {'players': rooms_data[room_code]}, room=room_code)
+    emit('update_players', room, room=room_code)
     emit('player_joined', {'username': username}, room=room_code, include_self=False)
+
+@socketio.on('kick_player')
+def handle_kick_player(data):
+    room_code = data.get('room_code')
+    username_to_kick = data.get('username_to_kick')
+    host = data.get('host')
     
-    if room_code in games_data:
-        emit('update_game_state', {'state': games_data[room_code]}, room=room_code)
+    if room_code in rooms_data and rooms_data[room_code]['host'] == host:
+        room = rooms_data[room_code]
+        if username_to_kick in room['players']:
+            room['players'].remove(username_to_kick)
+            emit('update_players', room, room=room_code)
+            emit('kicked', {'username': username_to_kick}, room=room_code)
 
 @socketio.on('start_game')
 def handle_start_game(data):
     room_code = data.get('room_code')
     if room_code in rooms_data:
-        players = rooms_data[room_code]
+        room = rooms_data[room_code]
+        players = room['players']
         num_rounds = 5
         
-        rounds_with_math = []
-        for _ in range(num_rounds):
-            rounds_with_math.append(random.random() < 0.3)
+        rounds_with_math = [random.random() < 0.3 for _ in range(num_rounds)]
 
+        # ساخت وضعیت بازی (با تشخیص بات‌ها)
+        game_players = []
+        for p in players:
+            is_bot = p.startswith("بات")
+            game_players.append({'name': p, 'score': 0, 'numbers': [0]*num_rounds, 'is_bot': is_bot})
+        
         games_data[room_code] = {
-            'players': [{'name': p, 'score': 0, 'numbers': [0]*num_rounds} for p in players],
+            'players': game_players,
             'num_rounds': num_rounds,
             'current_round': 0,
             'current_player_idx': 0,
             'rounds_with_math': rounds_with_math,
             'current_question': None,
             'round_start_time': None,
-            'question_answered': False
+            'question_answered': False,
+            'bot_difficulty': room.get('bot_difficulty', 'medium')
         }
         
-        # آماده‌سازی دست اول
         if rounds_with_math[0]:
             games_data[room_code]['current_question'] = get_new_question()
             games_data[room_code]['round_start_time'] = time.time()
             
         emit('game_started', {'room_code': room_code, 'players': players}, room=room_code)
         emit('update_game_state', {'state': games_data[room_code]}, room=room_code)
+        
+        # اگه اولین نفر بات بود، خودکار بازی کنه
+        if game_players[0]['is_bot']:
+            socketio.start_background_task(process_bot_turns, room_code)
+
+def process_bot_turns(room_code):
+    time.sleep(2) # کمی صبر کن تا کلاینت‌ها آماده بشن
+    if room_code not in games_data: return
+    game = games_data[room_code]
+    
+    while game['current_player_idx'] < len(game['players']):
+        current_player = game['players'][game['current_player_idx']]
+        if not current_player['is_bot']: break
+        
+        # منطق بات
+        chosen_number = random.randint(1, 20)
+        if game['rounds_with_math'][game['current_round']] and game['current_question']:
+            difficulty = game['bot_difficulty']
+            if random.random() < (0.85 if difficulty == "hard" else 0.55 if difficulty == "medium" else 0.3):
+                chosen_number = game['current_question']['answer']
+        
+        game['players'][game['current_player_idx']]['numbers'][game['current_round']] = chosen_number
+        
+        if game['rounds_with_math'][game['current_round']] and game['current_question']:
+            if not game['question_answered']:
+                elapsed = time.time() - game['round_start_time']
+                if elapsed <= game['current_question']['time_limit'] and chosen_number == game['current_question']['answer']:
+                    game['players'][game['current_player_idx']]['score'] += 2
+                game['question_answered'] = True
+        
+        game['current_player_idx'] += 1
+        emit('update_game_state', {'state': game}, room=room_code)
+        time.sleep(1.5)
+        
+        if game['current_player_idx'] >= len(game['players']):
+            end_round_logic(game)
+            if game['current_round'] < game['num_rounds']:
+                if game['rounds_with_math'][game['current_round']]:
+                    game['current_question'] = get_new_question()
+                    game['round_start_time'] = time.time()
+                    game['question_answered'] = False
+                else:
+                    game['current_question'] = None
+            emit('update_game_state', {'state': game}, room=room_code)
 
 @socketio.on('submit_number')
 def handle_submit_number(data):
@@ -172,7 +249,6 @@ def handle_submit_number(data):
     player_idx = game['current_player_idx']
     game['players'][player_idx]['numbers'][game['current_round']] = number
     
-    # بررسی سوال ریاضی
     if game['rounds_with_math'][game['current_round']] and game['current_question']:
         if not game['question_answered']:
             elapsed = time.time() - game['round_start_time']
@@ -184,7 +260,6 @@ def handle_submit_number(data):
     
     if game['current_player_idx'] >= len(game['players']):
         end_round_logic(game)
-        # آماده‌سازی دست بعدی
         if game['current_round'] < game['num_rounds']:
             if game['rounds_with_math'][game['current_round']]:
                 game['current_question'] = get_new_question()
@@ -194,6 +269,10 @@ def handle_submit_number(data):
                 game['current_question'] = None
     
     emit('update_game_state', {'state': game}, room=room_code)
+    
+    # اگه نفر بعدی بات بود، نوبتش رو بازی کن
+    if game['current_player_idx'] < len(game['players']) and game['players'][game['current_player_idx']]['is_bot']:
+        socketio.start_background_task(process_bot_turns, room_code)
 
 def end_round_logic(game):
     r = game['current_round']
