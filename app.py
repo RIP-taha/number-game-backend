@@ -7,10 +7,11 @@ from database import (
     get_user_results, get_user_stats
 )
 import random
+import os
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret!'
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
 @app.after_request
 def add_cors_headers(response):
@@ -73,9 +74,9 @@ def get_results(user_id): return jsonify({"results": get_user_results(user_id)})
 def get_stats(user_id): return jsonify({"stats": get_user_stats(user_id)}), 200
 
 
-# --- Socket.IO Events (اتاق‌ها و بازی) ---
-rooms_data = {} # اتاق و بازیکنان
-games_data = {} # وضعیت بازی هر اتاق
+# --- Socket.IO Events for Rooms and Game ---
+rooms_data = {}
+games_data = {}
 
 @socketio.on('create_room')
 def handle_create_room(data):
@@ -97,8 +98,13 @@ def handle_join_room(data):
             rooms_data[room_code].append(username)
     else:
         rooms_data[room_code] = [username]
+    
     emit('update_players', {'players': rooms_data[room_code]}, room=room_code)
     emit('player_joined', {'username': username}, room=room_code, include_self=False)
+    
+    # اگه بازی در جریان هست، وضعیت رو برای نفر جدید هم بفرست
+    if room_code in games_data:
+        emit('update_game_state', {'state': games_data[room_code]}, room=room_code)
 
 @socketio.on('start_game')
 def handle_start_game(data):
@@ -161,6 +167,5 @@ def end_round_logic(game):
     game['current_player_idx'] = 0
 
 if __name__ == "__main__":
-    import os
     port = int(os.environ.get("PORT", 5000))
     socketio.run(app, debug=False, host="0.0.0.0", port=port, allow_unsafe_werkzeug=True)
