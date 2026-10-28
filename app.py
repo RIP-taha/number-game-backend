@@ -101,7 +101,6 @@ def handle_create_room(data):
     if not room_code or not username: return
     join_room(room_code)
     
-    # اعمال محدودیت‌ها
     if max_players > 20: max_players = 20
     if bot_count > 5: bot_count = 5
     
@@ -134,10 +133,14 @@ def handle_join_room(data):
         emit('error', {'message': 'اتاق پر است!'})
         return
     
+    # **مهم**: اول به اتاق Socket.IO وصل شو
+    join_room(room_code)
+    
+    # بعد اسم رو اضافه کن
     if username not in room['players']:
         room['players'].append(username)
     
-    join_room(room_code)
+    # حالا لیست رو برای همه بفرست
     emit('update_players', room, room=room_code)
     emit('player_joined', {'username': username}, room=room_code, include_self=False)
 
