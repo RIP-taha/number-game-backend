@@ -27,9 +27,6 @@ init_database()
 @app.route("/", methods=["GET"])
 def home(): return jsonify({"message": "Number Game API is running!"})
 
-# ... (کدهای API ثبت‌نام، ورود، پروفایل و غیره مثل قبل) ...
-# (برای اینکه کد طولانی نشه، این بخش‌ها رو کپی نکردم، همون‌هایی که توی فایل app.py خودت هستن رو نگه دار)
-
 @app.route("/api/register", methods=["POST"])
 def register():
     data = request.get_json()
@@ -82,7 +79,6 @@ def get_stats(user_id): return jsonify({"stats": get_user_stats(user_id)}), 200
 rooms_data = {}
 games_data = {}
 
-# بانک سوالات
 easy_questions = [(f"{a} + {b}", a + b) for a in range(1, 11) for b in range(1, 11) if a + b <= 20]
 medium_questions = [(f"{a} - {b}", a - b) for a in range(1, 21) for b in range(1, 21) if 1 <= a - b <= 20]
 hard_questions = [(f"{a} × {b}", a * b) for a in range(1, 21) for b in range(1, 21) if a * b <= 20]
@@ -105,7 +101,10 @@ def handle_create_room(data):
     if not room_code or not username: return
     join_room(room_code)
     
-    # ساخت لیست بازیکنان اولیه (شامل بات‌ها)
+    # اعمال محدودیت‌ها
+    if max_players > 20: max_players = 20
+    if bot_count > 5: bot_count = 5
+    
     players = [username]
     for i in range(bot_count):
         players.append(f"بات {i+1}")
@@ -165,7 +164,6 @@ def handle_start_game(data):
         
         rounds_with_math = [random.random() < 0.3 for _ in range(num_rounds)]
 
-        # ساخت وضعیت بازی (با تشخیص بات‌ها)
         game_players = []
         for p in players:
             is_bot = p.startswith("بات")
@@ -190,12 +188,11 @@ def handle_start_game(data):
         emit('game_started', {'room_code': room_code, 'players': players}, room=room_code)
         emit('update_game_state', {'state': games_data[room_code]}, room=room_code)
         
-        # اگه اولین نفر بات بود، خودکار بازی کنه
         if game_players[0]['is_bot']:
             socketio.start_background_task(process_bot_turns, room_code)
 
 def process_bot_turns(room_code):
-    time.sleep(2) # کمی صبر کن تا کلاینت‌ها آماده بشن
+    time.sleep(2)
     if room_code not in games_data: return
     game = games_data[room_code]
     
@@ -203,7 +200,6 @@ def process_bot_turns(room_code):
         current_player = game['players'][game['current_player_idx']]
         if not current_player['is_bot']: break
         
-        # منطق بات
         chosen_number = random.randint(1, 20)
         if game['rounds_with_math'][game['current_round']] and game['current_question']:
             difficulty = game['bot_difficulty']
@@ -270,7 +266,6 @@ def handle_submit_number(data):
     
     emit('update_game_state', {'state': game}, room=room_code)
     
-    # اگه نفر بعدی بات بود، نوبتش رو بازی کن
     if game['current_player_idx'] < len(game['players']) and game['players'][game['current_player_idx']]['is_bot']:
         socketio.start_background_task(process_bot_turns, room_code)
 
