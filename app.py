@@ -9,6 +9,7 @@ from database import (
 import random
 import os
 import time
+import copy
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get(
@@ -304,19 +305,46 @@ def get_new_question():
 
 
 def emit_game_state(room_code):
-    """ارسال وضعیت بازی به اعضای اتاق."""
+    """
+    ارسال نسخه امن وضعیت بازی به اعضای اتاق.
+
+    عددهای دست جاری تا پایان آن دست مخفی می‌مانند.
+    اطلاعات اصلی بازی در سرور تغییر نمی‌کند.
+    """
+
     game = games_data.get(room_code)
 
-    if game is not None:
-        socketio.emit(
-            "update_game_state",
-            {"state": game},
-            to=room_code
-        )
+    if game is None:
+        return
+
+    # روی یک کپی کار می‌کنیم تا عددهای واقعی بازی
+    # در حافظه سرور دست‌نخورده باقی بمانند.
+    public_game = copy.deepcopy(game)
+
+    current_round = public_game["current_round"]
+    num_rounds = public_game["num_rounds"]
+    game_over = public_game.get("game_over", False)
+
+    # در طول بازی، عددهای دست جاری برای همه مخفی‌اند.
+    # پس از پایان دست، current_round افزایش پیدا می‌کند
+    # و عددهای دست قبلی در وضعیت بعدی قابل مشاهده می‌شوند.
+    if not game_over and current_round < num_rounds:
+        for player in public_game["players"]:
+            numbers = player.get("numbers", [])
+
+            if current_round < len(numbers):
+                numbers[current_round] = None
+
+    socketio.emit(
+        "update_game_state",
+        {"state": public_game},
+        to=room_code
+    )
 
 
 def get_real_players(room):
     """برگرداندن بازیکنان واقعی بدون بات‌ها."""
+
     bot_names = set(room.get("bot_names", []))
 
     return [
@@ -565,9 +593,7 @@ def handle_create_room(data):
         })
         return
 
-    # نکته مهم:
     # تعداد بات‌ها در ظرفیت بازیکنان واقعی حساب نمی‌شود.
-    # بنابراین شرط bot_count + 1 > max_players حذف شده است.
 
     if bot_difficulty not in VALID_BOT_DIFFICULTIES:
         bot_difficulty = "medium"
@@ -583,7 +609,6 @@ def handle_create_room(data):
         for i in range(bot_count)
     ]
 
-    # جلوگیری از تداخل نام سازنده با نام بات‌ها
     if username in bot_names:
         emit("error", {
             "message": "این نام کاربری قابل استفاده نیست!"
@@ -645,7 +670,6 @@ def handle_join_room(data):
     room = rooms_data[room_code]
     bot_names = set(room.get("bot_names", []))
 
-    # نام بات نباید به‌عنوان بازیکن واقعی استفاده شود.
     if username in bot_names:
         emit("error", {
             "message": "این نام کاربری قابل استفاده نیست!"
@@ -653,8 +677,6 @@ def handle_join_room(data):
         return
 
     is_existing_player = username in room["players"]
-
-    # فقط بازیکنان واقعی برای ظرفیت شمرده می‌شوند.
     real_players_count = len(get_real_players(room))
 
     if (
@@ -684,11 +706,10 @@ def handle_join_room(data):
         room=room_code
     )
 
+    # وضعیت بازی را فقط از تابع امن ارسال می‌کنیم.
+    # ارسال مستقیم games_data می‌توانست عددهای مخفی را افشا کند.
     if room_code in games_data:
-        emit(
-            "update_game_state",
-            {"state": games_data[room_code]}
-        )
+        emit_game_state(room_code)
 
 
 # =========================
@@ -974,3 +995,4 @@ if __name__ == "__main__":
         port=port,
         allow_unsafe_werkzeug=True
     )
+
