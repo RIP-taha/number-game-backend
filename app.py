@@ -284,17 +284,14 @@ def handle_join_room(data):
 
     room = rooms_data[room_code]
 
-    # بازیکنی که قبلاً عضو بوده، می‌تواند دوباره وصل شود.
     is_existing_player = username in room['players']
 
     if not is_existing_player and len(room['players']) >= room['max_players']:
         emit('error', {'message': 'اتاق پر است!'})
         return
 
-    # اتصال این کاربر به اتاق Socket.IO
     join_room(room_code)
 
-    # بازیکن جدید فقط یک بار به فهرست اضافه می‌شود.
     if not is_existing_player:
         room['players'].append(username)
 
@@ -305,11 +302,9 @@ def handle_join_room(data):
             include_self=False
         )
 
-    # به‌روزرسانی فهرست بازیکنان اتاق
     emit('update_players', room, room=room_code)
 
-    # اگر بازی شروع شده باشد، وضعیت فعلی را برای همین
-    # بازیکن تازه‌متصل‌شده ارسال می‌کنیم.
+    # ارسال وضعیت بازی برای بازیکنی که دوباره وصل شده
     if room_code in games_data:
         emit(
             'update_game_state',
@@ -338,7 +333,6 @@ def handle_kick_player(data):
     if username_to_kick not in room['players']:
         return
 
-    # میزبان نمی‌تواند خودش را از اتاق حذف کند.
     if username_to_kick == room['host']:
         return
 
@@ -367,7 +361,6 @@ def handle_start_game(data):
 
     room = rooms_data[room_code]
 
-    # جلوگیری از شروع دوباره بازی فعال
     if room_code in games_data:
         emit('error', {'message': 'بازی این اتاق قبلاً شروع شده است!'})
         return
@@ -406,7 +399,10 @@ def handle_start_game(data):
         'current_question': None,
         'round_start_time': None,
         'question_answered': False,
-        'bot_difficulty': room.get('bot_difficulty', 'medium')
+        'bot_difficulty': room.get('bot_difficulty', 'medium'),
+
+        # وضعیت پایان بازی
+        'game_over': False
     }
 
     if rounds_with_math[0]:
@@ -445,7 +441,11 @@ def handle_submit_number(data):
 
     game = games_data[room_code]
 
-    # جلوگیری از ثبت عدد نامعتبر
+    # جلوگیری از ثبت عدد بعد از پایان بازی
+    if game.get('game_over', False):
+        emit('error', {'message': 'این بازی به پایان رسیده است!'})
+        return
+
     try:
         number = int(number)
     except (TypeError, ValueError):
@@ -456,7 +456,6 @@ def handle_submit_number(data):
         emit('error', {'message': 'عدد باید بین ۱ تا ۲۰ باشد!'})
         return
 
-    # جلوگیری از دسترسی به اندیس نامعتبر در پایان بازی
     if game['current_round'] >= game['num_rounds']:
         emit('error', {'message': 'این بازی به پایان رسیده است!'})
         return
@@ -467,38 +466,46 @@ def handle_submit_number(data):
 
     current_player = game['players'][game['current_player_idx']]['name']
 
-    # فقط بازیکن نوبت فعلی می‌تواند عدد ارسال کند.
     if username != current_player:
         emit('error', {'message': 'هنوز نوبت شما نیست!'})
         return
 
     player_idx = game['current_player_idx']
+    round_idx = game['current_round']
 
-    game['players'][player_idx]['numbers'][game['current_round']] = number
+    game['players'][player_idx]['numbers'][round_idx] = number
 
+    # بررسی سؤال ریاضی این دست
     if (
-        game['rounds_with_math'][game['current_round']]
+        game['rounds_with_math'][round_idx]
         and game['current_question']
+        and not game['question_answered']
     ):
-        if not game['question_answered']:
-            elapsed = time.time() - game['round_start_time']
+        elapsed = time.time() - game['round_start_time']
 
-            if (
-                elapsed <= game['current_question']['time_limit']
-                and number == game['current_question']['answer']
-            ):
-                game['players'][player_idx]['score'] += 2
+        if (
+            elapsed <= game['current_question']['time_limit']
+            and number == game['current_question']['answer']
+        ):
+            game['players'][player_idx]['score'] += 2
 
-            game['question_answered'] = True
+        game['question_answered'] = True
 
     game['current_player_idx'] += 1
 
-    # پایان نوبت بازیکنان و محاسبه امتیازهای دست
+    # پایان نوبت تمام بازیکنان
     if game['current_player_idx'] >= len(game['players']):
         end_round_logic(game)
 
-        # ساخت سؤال جدید در صورت نیاز
-        if game['current_round'] < game['num_rounds']:
+        # پایان کامل بازی بعد از آخرین دست
+        if game['current_round'] >= game['num_rounds']:
+            game['game_over'] = True
+            game['current_question'] = None
+            game['round_start_time'] = None
+            game['question_answered'] = False
+
+        else:
+            # آماده‌سازی دست بعدی
             if game['rounds_with_math'][game['current_round']]:
                 game['current_question'] = get_new_question()
                 game['round_start_time'] = time.time()
@@ -507,11 +514,8 @@ def handle_submit_number(data):
                 game['current_question'] = None
                 game['round_start_time'] = None
                 game['question_answered'] = False
-        else:
-            game['current_question'] = None
-            game['round_start_time'] = None
 
-    # ارسال وضعیت جدید به همه بازیکنان اتاق
+    # ارسال وضعیت جدید به همه بازیکنان
     emit(
         'update_game_state',
         {'state': game},
@@ -555,7 +559,7 @@ def end_round_logic(game):
         if is_unique:
             p['score'] += 1
 
-    # مرتب‌سازی براساس امتیاز
+    # مرتب‌سازی بر اساس امتیاز
     game['players'].sort(
         key=lambda x: x['score'],
         reverse=True
