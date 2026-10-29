@@ -11,7 +11,10 @@ import os
 import time
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'change-this-secret-in-production')
+app.config['SECRET_KEY'] = os.environ.get(
+    'SECRET_KEY',
+    'change-this-secret-in-production'
+)
 
 socketio = SocketIO(
     app,
@@ -23,8 +26,12 @@ socketio = SocketIO(
 @app.after_request
 def add_cors_headers(response):
     response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = (
+        "Content-Type, Authorization"
+    )
+    response.headers["Access-Control-Allow-Methods"] = (
+        "GET, POST, PUT, DELETE, OPTIONS"
+    )
     return response
 
 
@@ -37,7 +44,9 @@ init_database()
 
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({"message": "Number Game API is running!"})
+    return jsonify({
+        "message": "Number Game API is running!"
+    })
 
 
 @app.route("/api/register", methods=["POST"])
@@ -51,26 +60,41 @@ def register():
     email = data.get("email", "")
     password = data.get("password", "")
 
-    if not all(isinstance(value, str) for value in (username, email, password)):
-        return jsonify({"error": "اطلاعات واردشده معتبر نیست!"}), 400
+    if not all(
+        isinstance(value, str)
+        for value in (username, email, password)
+    ):
+        return jsonify({
+            "error": "اطلاعات واردشده معتبر نیست!"
+        }), 400
 
     username = username.strip()
     email = email.strip()
 
     if not username or not email or not password:
-        return jsonify({"error": "همه فیلدها الزامی است!"}), 400
+        return jsonify({
+            "error": "همه فیلدها الزامی است!"
+        }), 400
 
     if len(username) < 3:
-        return jsonify({"error": "نام کاربری باید حداقل ۳ کاراکتر باشد!"}), 400
+        return jsonify({
+            "error": "نام کاربری باید حداقل ۳ کاراکتر باشد!"
+        }), 400
 
     if len(password) < 6:
-        return jsonify({"error": "رمز عبور باید حداقل ۶ کاراکتر باشد!"}), 400
+        return jsonify({
+            "error": "رمز عبور باید حداقل ۶ کاراکتر باشد!"
+        }), 400
 
     if get_user_by_username(username):
-        return jsonify({"error": "این نام کاربری قبلاً گرفته شده!"}), 400
+        return jsonify({
+            "error": "این نام کاربری قبلاً گرفته شده!"
+        }), 400
 
     if get_user_by_email(email):
-        return jsonify({"error": "این ایمیل قبلاً ثبت شده!"}), 400
+        return jsonify({
+            "error": "این ایمیل قبلاً ثبت شده!"
+        }), 400
 
     user_id = create_user(
         username,
@@ -79,7 +103,9 @@ def register():
     )
 
     if not user_id:
-        return jsonify({"error": "خطا در ساخت حساب!"}), 500
+        return jsonify({
+            "error": "خطا در ساخت حساب!"
+        }), 500
 
     return jsonify({
         "message": "ثبت‌نام موفق!",
@@ -102,20 +128,28 @@ def login():
     password = data.get("password", "")
 
     if not isinstance(username, str) or not isinstance(password, str):
-        return jsonify({"error": "اطلاعات واردشده معتبر نیست!"}), 400
+        return jsonify({
+            "error": "اطلاعات واردشده معتبر نیست!"
+        }), 400
 
     username = username.strip()
 
     if not username or not password:
-        return jsonify({"error": "همه فیلدها الزامی است!"}), 400
+        return jsonify({
+            "error": "همه فیلدها الزامی است!"
+        }), 400
 
     user = get_user_by_username(username)
 
     if not user:
-        return jsonify({"error": "کاربری با این نام پیدا نشد!"}), 401
+        return jsonify({
+            "error": "کاربری با این نام پیدا نشد!"
+        }), 401
 
     if not check_password_hash(user["password_hash"], password):
-        return jsonify({"error": "رمز عبور اشتباه است!"}), 401
+        return jsonify({
+            "error": "رمز عبور اشتباه است!"
+        }), 401
 
     return jsonify({
         "message": "ورود موفق!",
@@ -132,7 +166,9 @@ def get_user(user_id):
     user = get_user_by_id(user_id)
 
     if not user:
-        return jsonify({"error": "کاربر پیدا نشد!"}), 404
+        return jsonify({
+            "error": "کاربر پیدا نشد!"
+        }), 404
 
     return jsonify({
         "id": user["id"],
@@ -148,11 +184,14 @@ def save_result():
     if not data:
         return jsonify({"error": "داده‌ای ارسال نشد!"}), 400
 
-    # نکته امنیتی: این مسیر فعلاً همان قرارداد قبلی فرانت‌اند را حفظ می‌کند.
-    # در نسخه نهایی بهتر است احراز هویت و اعتبارسنجی نتیجه در سمت سرور اضافه شود.
-    required_fields = ("user_id", "score", "rank", "players", "rounds")
+    required_fields = (
+        "user_id", "score", "rank", "players", "rounds"
+    )
+
     if any(field not in data for field in required_fields):
-        return jsonify({"error": "اطلاعات نتیجه کامل نیست!"}), 400
+        return jsonify({
+            "error": "اطلاعات نتیجه کامل نیست!"
+        }), 400
 
     try:
         user_id = int(data["user_id"])
@@ -161,24 +200,46 @@ def save_result():
         players_count = int(data["players"])
         rounds = int(data["rounds"])
     except (TypeError, ValueError):
-        return jsonify({"error": "اطلاعات نتیجه معتبر نیست!"}), 400
+        return jsonify({
+            "error": "اطلاعات نتیجه معتبر نیست!"
+        }), 400
 
-    if user_id < 1 or score < 0 or rank < 1 or players_count < 1 or rounds < 1:
-        return jsonify({"error": "اطلاعات نتیجه خارج از محدوده مجاز است!"}), 400
+    if (
+        user_id < 1
+        or score < 0
+        or rank < 1
+        or players_count < 1
+        or rounds < 1
+    ):
+        return jsonify({
+            "error": "اطلاعات نتیجه خارج از محدوده مجاز است!"
+        }), 400
 
-    save_game_result(user_id, score, rank, players_count, rounds)
+    save_game_result(
+        user_id,
+        score,
+        rank,
+        players_count,
+        rounds
+    )
 
-    return jsonify({"message": "نتیجه ذخیره شد!"}), 201
+    return jsonify({
+        "message": "نتیجه ذخیره شد!"
+    }), 201
 
 
 @app.route("/api/results/<int:user_id>", methods=["GET"])
 def get_results(user_id):
-    return jsonify({"results": get_user_results(user_id)}), 200
+    return jsonify({
+        "results": get_user_results(user_id)
+    }), 200
 
 
 @app.route("/api/stats/<int:user_id>", methods=["GET"])
 def get_stats(user_id):
-    return jsonify({"stats": get_user_stats(user_id)}), 200
+    return jsonify({
+        "stats": get_user_stats(user_id)
+    }), 200
 
 
 # =========================
@@ -188,7 +249,11 @@ def get_stats(user_id):
 rooms_data = {}
 games_data = {}
 
-VALID_BOT_DIFFICULTIES = {"easy", "medium", "hard"}
+VALID_BOT_DIFFICULTIES = {
+    "easy",
+    "medium",
+    "hard"
+}
 
 easy_questions = [
     (f"{a} + {b}", a + b)
@@ -213,28 +278,35 @@ hard_questions = [
 
 
 def get_new_question():
-    level = random.choice(["easy", "medium", "hard"])
+    level = random.choice([
+        "easy",
+        "medium",
+        "hard"
+    ])
 
     if level == "easy":
-        q, ans = random.choice(easy_questions)
+        question, answer = random.choice(easy_questions)
         time_limit = 7
+
     elif level == "medium":
-        q, ans = random.choice(medium_questions)
+        question, answer = random.choice(medium_questions)
         time_limit = 10
+
     else:
-        q, ans = random.choice(hard_questions)
+        question, answer = random.choice(hard_questions)
         time_limit = 15
 
     return {
-        "question": q,
-        "answer": ans,
+        "question": question,
+        "answer": answer,
         "time_limit": time_limit
     }
 
 
 def emit_game_state(room_code):
-    """وضعیت فعلی بازی را برای تمام اعضای اتاق بفرست."""
+    """ارسال وضعیت بازی به اعضای اتاق."""
     game = games_data.get(room_code)
+
     if game is not None:
         socketio.emit(
             "update_game_state",
@@ -243,14 +315,22 @@ def emit_game_state(room_code):
         )
 
 
+def get_real_players(room):
+    """برگرداندن بازیکنان واقعی بدون بات‌ها."""
+    bot_names = set(room.get("bot_names", []))
+
+    return [
+        player
+        for player in room["players"]
+        if player not in bot_names
+    ]
+
+
 def choose_bot_number(game, player, round_idx):
-    """
-    انتخاب عدد بات بین ۱ تا ۲۰.
-    easy: انتخاب کاملاً تصادفی
-    medium: تمایل به انتخاب عددی که احتمال امتیاز بیشتری دارد
-    hard: انتخاب عدد با بررسی عددهای انتخاب‌شده در راندهای قبلی بازی
-    """
+    """انتخاب عدد توسط بات."""
+
     difficulty = game.get("bot_difficulty", "medium")
+
     if difficulty not in VALID_BOT_DIFFICULTIES:
         difficulty = "medium"
 
@@ -266,29 +346,47 @@ def choose_bot_number(game, player, round_idx):
     ]
 
     if difficulty == "medium":
-        # تصمیم نیمه‌تصادفی؛ بات گاهی زیر ۱۰ و گاهی ۱۰ یا بیشتر انتخاب می‌کند.
-        if random.random() < 0.65:
-            return random.choice(list(range(1, 10)) + list(range(10, 21)))
         return random.randint(1, 20)
 
-    # سطح سخت: تلاش برای انتخاب عدد منحصربه‌فرد و قرار گرفتن در گروه کم‌تعداد.
-    counts_low = sum(1 for n in previous_numbers if n < 10)
-    counts_high = sum(1 for n in previous_numbers if n >= 10)
+    # Hard: تلاش برای انتخاب عدد منحصربه‌فرد
+    # و قرار گرفتن در گروه کم‌تعدادتر.
+
+    counts_low = sum(
+        1 for number in previous_numbers
+        if number < 10
+    )
+
+    counts_high = sum(
+        1 for number in previous_numbers
+        if number >= 10
+    )
 
     if counts_low < counts_high:
         preferred_range = range(1, 10)
+
     elif counts_high < counts_low:
         preferred_range = range(10, 21)
+
     else:
         preferred_range = range(1, 21)
 
-    used = set(previous_numbers)
-    preferred_unused = [n for n in preferred_range if n not in used]
+    used_numbers = set(previous_numbers)
+
+    preferred_unused = [
+        number
+        for number in preferred_range
+        if number not in used_numbers
+    ]
 
     if preferred_unused:
         return random.choice(preferred_unused)
 
-    all_unused = [n for n in range(1, 21) if n not in used]
+    all_unused = [
+        number
+        for number in range(1, 21)
+        if number not in used_numbers
+    ]
+
     if all_unused:
         return random.choice(all_unused)
 
@@ -296,9 +394,11 @@ def choose_bot_number(game, player, round_idx):
 
 
 def apply_number_to_player(game, player_idx, number):
-    """ثبت یک عدد و محاسبه امتیاز سؤال ریاضی برای یک بازیکن."""
+    """ثبت عدد و بررسی امتیاز سؤال ریاضی."""
+
     round_idx = game["current_round"]
     player = game["players"][player_idx]
+
     player["numbers"][round_idx] = number
 
     if (
@@ -307,17 +407,21 @@ def apply_number_to_player(game, player_idx, number):
         and not game.get("question_answered", False)
     ):
         elapsed = time.time() - game["round_start_time"]
+
         if (
             elapsed <= game["current_question"]["time_limit"]
             and number == game["current_question"]["answer"]
         ):
             player["score"] += 2
+
         game["question_answered"] = True
 
 
 def prepare_next_round_or_finish(room_code):
-    """پایان راند و آماده‌سازی سؤال/راند بعدی یا پایان کامل بازی."""
+    """پایان راند و آماده‌سازی راند بعدی."""
+
     game = games_data[room_code]
+
     end_round_logic(game)
 
     if game["current_round"] >= game["num_rounds"]:
@@ -331,6 +435,7 @@ def prepare_next_round_or_finish(room_code):
         game["current_question"] = get_new_question()
         game["round_start_time"] = time.time()
         game["question_answered"] = False
+
     else:
         game["current_question"] = None
         game["round_start_time"] = None
@@ -338,17 +443,15 @@ def prepare_next_round_or_finish(room_code):
 
 
 def process_automatic_bot_turns(room_code):
-    """
-    اجرای بات‌های پشت‌سرهم در سمت سرور.
-    با هر حرکت، وضعیت به کل اتاق ارسال می‌شود.
-    """
+    """اجرای خودکار نوبت‌های بات."""
+
     game = games_data.get(room_code)
+
     if not game or game.get("game_over"):
         return
 
-    # اگر بازی در حالت سؤال ریاضی است و زمان سؤال تمام شده،
-    # پاسخ بات نباید بعد از زمان مجاز امتیاز بگیرد.
     while not game.get("game_over"):
+
         if game["current_round"] >= game["num_rounds"]:
             game["game_over"] = True
             game["current_question"] = None
@@ -358,8 +461,10 @@ def process_automatic_bot_turns(room_code):
         if game["current_player_idx"] >= len(game["players"]):
             prepare_next_round_or_finish(room_code)
             emit_game_state(room_code)
+
             if game.get("game_over"):
                 break
+
             continue
 
         current_idx = game["current_player_idx"]
@@ -368,39 +473,46 @@ def process_automatic_bot_turns(room_code):
         if not current_player.get("is_bot", False):
             break
 
-        # مکث کوتاه برای طبیعی‌تر بودن روند بازی
         socketio.sleep(0.45)
 
-        # وضعیت را دوباره بخوان؛ ممکن است بازی در این فاصله تمام شده باشد.
         game = games_data.get(room_code)
+
         if not game or game.get("game_over"):
             return
+
         if game["current_round"] >= game["num_rounds"]:
             game["game_over"] = True
             game["current_question"] = None
             game["round_start_time"] = None
             break
+
         if game["current_player_idx"] >= len(game["players"]):
             continue
 
         current_idx = game["current_player_idx"]
         current_player = game["players"][current_idx]
 
-        # اگر نوبت در فاصله مکث تغییر کرده و حالا نوبت انسان است، متوقف شو.
         if not current_player.get("is_bot", False):
             break
 
-        number = choose_bot_number(game, current_player, game["current_round"])
-        apply_number_to_player(game, current_idx, number)
+        number = choose_bot_number(
+            game,
+            current_player,
+            game["current_round"]
+        )
+
+        apply_number_to_player(
+            game,
+            current_idx,
+            number
+        )
+
         game["current_player_idx"] += 1
 
         if game["current_player_idx"] >= len(game["players"]):
             prepare_next_round_or_finish(room_code)
 
         emit_game_state(room_code)
-
-    # اگر پس از پایان حرکت بات‌ها، بات دیگری پشت سر هم نوبت داشته باشد،
-    # حلقه بالا آن را هم اجرا می‌کند. اگر نوبت انسان باشد، اینجا متوقف می‌شویم.
 
 
 # =========================
@@ -410,6 +522,7 @@ def process_automatic_bot_turns(room_code):
 @socketio.on("create_room")
 def handle_create_room(data):
     data = data or {}
+
     room_code = data.get("room_code")
     username = data.get("username")
     max_players = data.get("max_players", 2)
@@ -417,10 +530,15 @@ def handle_create_room(data):
     bot_difficulty = data.get("bot_difficulty", "medium")
 
     if not isinstance(room_code, str) or not room_code.strip():
-        emit("error", {"message": "کد اتاق معتبر نیست!"})
+        emit("error", {
+            "message": "کد اتاق معتبر نیست!"
+        })
         return
+
     if not isinstance(username, str) or not username.strip():
-        emit("error", {"message": "نام کاربری معتبر نیست!"})
+        emit("error", {
+            "message": "نام کاربری معتبر نیست!"
+        })
         return
 
     room_code = room_code.strip()
@@ -430,39 +548,66 @@ def handle_create_room(data):
         max_players = int(max_players)
         bot_count = int(bot_count)
     except (TypeError, ValueError):
-        emit("error", {"message": "تنظیمات اتاق نامعتبر است!"})
+        emit("error", {
+            "message": "تنظیمات اتاق نامعتبر است!"
+        })
         return
 
     if max_players < 2 or max_players > 20:
-        emit("error", {"message": "ظرفیت اتاق باید بین ۲ تا ۲۰ باشد!"})
+        emit("error", {
+            "message": "ظرفیت اتاق باید بین ۲ تا ۲۰ باشد!"
+        })
         return
+
     if bot_count < 0 or bot_count > 5:
-        emit("error", {"message": "تعداد بات باید بین صفر تا پنج باشد!"})
+        emit("error", {
+            "message": "تعداد بات باید بین صفر تا پنج باشد!"
+        })
         return
-    if bot_count + 1 > max_players:
-        emit("error", {"message": "ظرفیت اتاق برای این تعداد بات کافی نیست!"})
-        return
+
+    # نکته مهم:
+    # تعداد بات‌ها در ظرفیت بازیکنان واقعی حساب نمی‌شود.
+    # بنابراین شرط bot_count + 1 > max_players حذف شده است.
+
     if bot_difficulty not in VALID_BOT_DIFFICULTIES:
         bot_difficulty = "medium"
+
     if room_code in rooms_data:
-        emit("error", {"message": "این کد اتاق قبلاً استفاده شده است!"})
+        emit("error", {
+            "message": "این کد اتاق قبلاً استفاده شده است!"
+        })
         return
 
-    join_room(room_code)
+    bot_names = [
+        f"بات {i + 1}"
+        for i in range(bot_count)
+    ]
 
-    players = [username]
-    for i in range(bot_count):
-        players.append(f"بات {i + 1}")
+    # جلوگیری از تداخل نام سازنده با نام بات‌ها
+    if username in bot_names:
+        emit("error", {
+            "message": "این نام کاربری قابل استفاده نیست!"
+        })
+        return
+
+    players = [username] + bot_names
 
     rooms_data[room_code] = {
         "players": players,
+        "bot_names": bot_names,
         "host": username,
         "max_players": max_players,
         "bot_count": bot_count,
         "bot_difficulty": bot_difficulty
     }
 
-    emit("update_players", rooms_data[room_code], room=room_code)
+    join_room(room_code)
+
+    emit(
+        "update_players",
+        rooms_data[room_code],
+        room=room_code
+    )
 
 
 # =========================
@@ -472,28 +617,60 @@ def handle_create_room(data):
 @socketio.on("join_room")
 def handle_join_room(data):
     data = data or {}
+
     room_code = data.get("room_code")
     username = data.get("username")
 
+    if not isinstance(room_code, str) or not isinstance(username, str):
+        emit("error", {
+            "message": "کد اتاق و نام کاربری الزامی است!"
+        })
+        return
+
+    room_code = room_code.strip()
+    username = username.strip()
+
     if not room_code or not username:
-        emit("error", {"message": "کد اتاق و نام کاربری الزامی است!"})
+        emit("error", {
+            "message": "کد اتاق و نام کاربری الزامی است!"
+        })
         return
 
     if room_code not in rooms_data:
-        emit("error", {"message": "اتاق پیدا نشد!"})
+        emit("error", {
+            "message": "اتاق پیدا نشد!"
+        })
         return
 
     room = rooms_data[room_code]
+    bot_names = set(room.get("bot_names", []))
+
+    # نام بات نباید به‌عنوان بازیکن واقعی استفاده شود.
+    if username in bot_names:
+        emit("error", {
+            "message": "این نام کاربری قابل استفاده نیست!"
+        })
+        return
+
     is_existing_player = username in room["players"]
 
-    if not is_existing_player and len(room["players"]) >= room["max_players"]:
-        emit("error", {"message": "اتاق پر است!"})
+    # فقط بازیکنان واقعی برای ظرفیت شمرده می‌شوند.
+    real_players_count = len(get_real_players(room))
+
+    if (
+        not is_existing_player
+        and real_players_count >= room["max_players"]
+    ):
+        emit("error", {
+            "message": "ظرفیت بازیکنان واقعی اتاق پر است!"
+        })
         return
 
     join_room(room_code)
 
     if not is_existing_player:
         room["players"].append(username)
+
         emit(
             "player_joined",
             {"username": username},
@@ -501,10 +678,17 @@ def handle_join_room(data):
             include_self=False
         )
 
-    emit("update_players", room, room=room_code)
+    emit(
+        "update_players",
+        room,
+        room=room_code
+    )
 
     if room_code in games_data:
-        emit("update_game_state", {"state": games_data[room_code]})
+        emit(
+            "update_game_state",
+            {"state": games_data[room_code]}
+        )
 
 
 # =========================
@@ -514,6 +698,7 @@ def handle_join_room(data):
 @socketio.on("kick_player")
 def handle_kick_player(data):
     data = data or {}
+
     room_code = data.get("room_code")
     username_to_kick = data.get("username_to_kick")
     host = data.get("host")
@@ -522,19 +707,33 @@ def handle_kick_player(data):
         return
 
     room = rooms_data[room_code]
+    bot_names = set(room.get("bot_names", []))
 
     if room["host"] != host:
         return
+
     if username_to_kick not in room["players"]:
         return
+
     if username_to_kick == room["host"]:
         return
-    if username_to_kick.startswith("بات"):
+
+    if username_to_kick in bot_names:
         return
 
     room["players"].remove(username_to_kick)
-    emit("update_players", room, room=room_code)
-    emit("kicked", {"username": username_to_kick}, room=room_code)
+
+    emit(
+        "update_players",
+        room,
+        room=room_code
+    )
+
+    emit(
+        "kicked",
+        {"username": username_to_kick},
+        room=room_code
+    )
 
 
 # =========================
@@ -544,31 +743,43 @@ def handle_kick_player(data):
 @socketio.on("start_game")
 def handle_start_game(data):
     data = data or {}
+
     room_code = data.get("room_code")
 
     if room_code not in rooms_data:
-        emit("error", {"message": "اتاق پیدا نشد!"})
+        emit("error", {
+            "message": "اتاق پیدا نشد!"
+        })
         return
+
     if room_code in games_data:
-        emit("error", {"message": "بازی این اتاق قبلاً شروع شده است!"})
+        emit("error", {
+            "message": "بازی این اتاق قبلاً شروع شده است!"
+        })
         return
 
     room = rooms_data[room_code]
     players = room["players"]
+    bot_names = set(room.get("bot_names", []))
 
     if not players:
-        emit("error", {"message": "هیچ بازیکنی در اتاق نیست!"})
+        emit("error", {
+            "message": "هیچ بازیکنی در اتاق نیست!"
+        })
         return
 
     num_rounds = 5
+
     rounds_with_math = [
         random.random() < 0.3
         for _ in range(num_rounds)
     ]
 
     game_players = []
+
     for player_name in players:
-        is_bot = player_name.startswith("بات")
+        is_bot = player_name in bot_names
+
         game_players.append({
             "name": player_name,
             "score": 0,
@@ -585,7 +796,10 @@ def handle_start_game(data):
         "current_question": None,
         "round_start_time": None,
         "question_answered": False,
-        "bot_difficulty": room.get("bot_difficulty", "medium"),
+        "bot_difficulty": room.get(
+            "bot_difficulty",
+            "medium"
+        ),
         "game_over": False
     }
 
@@ -595,13 +809,19 @@ def handle_start_game(data):
 
     emit(
         "game_started",
-        {"room_code": room_code, "players": players},
+        {
+            "room_code": room_code,
+            "players": players
+        },
         room=room_code
     )
+
     emit_game_state(room_code)
 
-    # اگر اولین نوبت متعلق به بات باشد، بات‌ها بلافاصله اجرا شوند.
-    socketio.start_background_task(process_automatic_bot_turns, room_code)
+    socketio.start_background_task(
+        process_automatic_bot_turns,
+        room_code
+    )
 
 
 # =========================
@@ -611,53 +831,76 @@ def handle_start_game(data):
 @socketio.on("submit_number")
 def handle_submit_number(data):
     data = data or {}
+
     room_code = data.get("room_code")
     username = data.get("username")
     number = data.get("number")
 
     if room_code not in games_data:
-        emit("error", {"message": "بازی پیدا نشد!"})
+        emit("error", {
+            "message": "بازی پیدا نشد!"
+        })
         return
 
     game = games_data[room_code]
 
     if game.get("game_over", False):
-        emit("error", {"message": "این بازی به پایان رسیده است!"})
+        emit("error", {
+            "message": "این بازی به پایان رسیده است!"
+        })
         return
 
     if game["current_round"] >= game["num_rounds"]:
         game["game_over"] = True
-        emit("error", {"message": "این بازی به پایان رسیده است!"})
+
+        emit("error", {
+            "message": "این بازی به پایان رسیده است!"
+        })
+
         emit_game_state(room_code)
         return
 
     try:
         number = int(number)
     except (TypeError, ValueError):
-        emit("error", {"message": "عدد واردشده معتبر نیست!"})
+        emit("error", {
+            "message": "عدد واردشده معتبر نیست!"
+        })
         return
 
     if number < 1 or number > 20:
-        emit("error", {"message": "عدد باید بین ۱ تا ۲۰ باشد!"})
+        emit("error", {
+            "message": "عدد باید بین ۱ تا ۲۰ باشد!"
+        })
         return
 
     if game["current_player_idx"] >= len(game["players"]):
-        emit("error", {"message": "در حال آماده‌سازی دست بعدی هستیم!"})
+        emit("error", {
+            "message": "در حال آماده‌سازی دست بعدی هستیم!"
+        })
         return
 
     player_idx = game["current_player_idx"]
     current_player = game["players"][player_idx]
 
-    # بات‌ها فقط از منطق خودکار سرور حرکت می‌کنند.
     if current_player.get("is_bot", False):
-        emit("error", {"message": "نوبت بات است؛ سرور در حال اجرای حرکت آن است."})
+        emit("error", {
+            "message": "نوبت بات است؛ سرور در حال اجرای حرکت آن است."
+        })
         return
 
     if username != current_player["name"]:
-        emit("error", {"message": "هنوز نوبت شما نیست!"})
+        emit("error", {
+            "message": "هنوز نوبت شما نیست!"
+        })
         return
 
-    apply_number_to_player(game, player_idx, number)
+    apply_number_to_player(
+        game,
+        player_idx,
+        number
+    )
+
     game["current_player_idx"] += 1
 
     if game["current_player_idx"] >= len(game["players"]):
@@ -666,7 +909,10 @@ def handle_submit_number(data):
     emit_game_state(room_code)
 
     if not game.get("game_over", False):
-        socketio.start_background_task(process_automatic_bot_turns, room_code)
+        socketio.start_background_task(
+            process_automatic_bot_turns,
+            room_code
+        )
 
 
 # =========================
@@ -680,12 +926,14 @@ def end_round_logic(game):
         1 for player in game["players"]
         if player["numbers"][round_idx] < 10
     )
+
     two_count = len(game["players"]) - one_count
 
     if one_count < two_count:
         for player in game["players"]:
             if player["numbers"][round_idx] < 10:
                 player["score"] += 3
+
     elif two_count < one_count:
         for player in game["players"]:
             if player["numbers"][round_idx] >= 10:
@@ -693,14 +941,21 @@ def end_round_logic(game):
 
     for i, player in enumerate(game["players"]):
         number = player["numbers"][round_idx]
+
         is_unique = all(
-            j == i or game["players"][j]["numbers"][round_idx] != number
+            j == i
+            or game["players"][j]["numbers"][round_idx] != number
             for j in range(len(game["players"]))
         )
+
         if is_unique:
             player["score"] += 1
 
-    game["players"].sort(key=lambda player: player["score"], reverse=True)
+    game["players"].sort(
+        key=lambda player: player["score"],
+        reverse=True
+    )
+
     game["current_round"] += 1
     game["current_player_idx"] = 0
 
@@ -711,6 +966,7 @@ def end_round_logic(game):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
+
     socketio.run(
         app,
         debug=False,
