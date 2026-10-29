@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
-from flask_socketio import SocketIO, join_room, leave_room, emit
+from flask_socketio import SocketIO, join_room, emit
 from database import (
     init_database, create_user, get_user_by_username,
     get_user_by_email, get_user_by_id, save_game_result,
@@ -12,8 +12,7 @@ import time
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret!'
-# تنظیم Socket.IO برای کار با Polling روی Render
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', ping_timeout=60, ping_interval=25)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
 @app.after_request
 def add_cors_headers(response):
@@ -24,7 +23,6 @@ def add_cors_headers(response):
 
 init_database()
 
-# --- API ها ---
 @app.route("/", methods=["GET"])
 def home(): return jsonify({"message": "Number Game API is running!"})
 
@@ -75,8 +73,6 @@ def get_results(user_id): return jsonify({"results": get_user_results(user_id)})
 @app.route("/api/stats/<int:user_id>", methods=["GET"])
 def get_stats(user_id): return jsonify({"stats": get_user_stats(user_id)}), 200
 
-
-# --- Socket.IO Events ---
 rooms_data = {}
 games_data = {}
 
