@@ -4,3 +4,4 @@ gunicorn
 flask-socketio
 gevent
 gevent-websocket
+psycopg[binary]

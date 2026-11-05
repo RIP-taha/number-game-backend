@@ -1,116 +1,169 @@
-import sqlite3
-import os
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "game.db")
+import os
+import psycopg
+from psycopg.rows import dict_row
+from psycopg.errors import UniqueViolation
+
+
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
 
 def get_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    if not DATABASE_URL:
+        raise RuntimeError(
+            "DATABASE_URL environment variable is not configured!"
+        )
+
+    return psycopg.connect(
+        DATABASE_URL,
+        row_factory=dict_row,
+        sslmode="require"
+    )
+
 
 def init_database():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            email TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS game_results (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            score INTEGER NOT NULL,
-            rank INTEGER NOT NULL,
-            players INTEGER NOT NULL,
-            rounds INTEGER NOT NULL,
-            played_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users(id)
-        )
-    """)
-    conn.commit()
-    conn.close()
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id BIGSERIAL PRIMARY KEY,
+                    username TEXT UNIQUE NOT NULL,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS game_results (
+                    id BIGSERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL
+                        REFERENCES users(id) ON DELETE CASCADE,
+                    score INTEGER NOT NULL,
+                    rank INTEGER NOT NULL,
+                    players INTEGER NOT NULL,
+                    rounds INTEGER NOT NULL,
+                    played_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # آماده‌سازی نقش مدیر برای مراحل بعدی
+            cursor.execute("""
+                ALTER TABLE users
+                ADD COLUMN IF NOT EXISTS is_admin
+                BOOLEAN NOT NULL DEFAULT FALSE
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS
+                idx_game_results_user_id
+                ON game_results(user_id)
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS
+                idx_game_results_played_at
+                ON game_results(played_at DESC)
+            """)
+
 
 def create_user(username, email, password_hash):
-    conn = get_connection()
-    cursor = conn.cursor()
     try:
-        cursor.execute(
-            "INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
-            (username, email, password_hash)
-        )
-        conn.commit()
-        user_id = cursor.lastrowid
-        return user_id
-    except sqlite3.IntegrityError:
+        with get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    INSERT INTO users
+                    (username, email, password_hash)
+                    VALUES (%s, %s, %s)
+                    RETURNING id
+                """, (username, email, password_hash))
+
+                row = cursor.fetchone()
+                return row["id"]
+
+    except UniqueViolation:
         return None
-    finally:
-        conn.close()
+
 
 def get_user_by_username(username):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
-    row = cursor.fetchone()
-    conn.close()
-    return dict(row) if row else None
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT * FROM users WHERE username = %s",
+                (username,)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
 
 def get_user_by_email(email):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
-    row = cursor.fetchone()
-    conn.close()
-    return dict(row) if row else None
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT * FROM users WHERE email = %s",
+                (email,)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
 
 def get_user_by_id(user_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
-    row = cursor.fetchone()
-    conn.close()
-    return dict(row) if row else None
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT * FROM users WHERE id = %s",
+                (user_id,)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
 
 def save_game_result(user_id, score, rank, players, rounds):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO game_results (user_id, score, rank, players, rounds) VALUES (?, ?, ?, ?, ?)",
-        (user_id, score, rank, players, rounds)
-    )
-    conn.commit()
-    conn.close()
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO game_results
+                (user_id, score, rank, players, rounds)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (user_id, score, rank, players, rounds))
+
 
 def get_user_results(user_id, limit=20):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT * FROM game_results WHERE user_id = ? ORDER BY played_at DESC LIMIT ?",
-        (user_id, limit)
-    )
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT *
+                FROM game_results
+                WHERE user_id = %s
+                ORDER BY played_at DESC
+                LIMIT %s
+            """, (user_id, limit))
+
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
 
 def get_user_stats(user_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM game_results WHERE user_id = ?", (user_id,))
-    games = cursor.fetchone()[0]
-    cursor.execute("SELECT COUNT(*) FROM game_results WHERE user_id = ? AND rank = 1", (user_id,))
-    wins = cursor.fetchone()[0]
-    cursor.execute("SELECT AVG(score) FROM game_results WHERE user_id = ?", (user_id,))
-    avg = cursor.fetchone()[0]
-    cursor.execute("SELECT MAX(score) FROM game_results WHERE user_id = ?", (user_id,))
-    best = cursor.fetchone()[0]
-    conn.close()
-    return {
-        "games": games,
-        "wins": wins,
-        "avg": round(avg, 1) if avg else 0,
-        "best": best if best else 0
-    }
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT
+                    COUNT(*) AS games,
+                    COUNT(*) FILTER (WHERE rank = 1) AS wins,
+                    AVG(score) AS avg,
+                    MAX(score) AS best
+                FROM game_results
+                WHERE user_id = %s
+            """, (user_id,))
+
+            row = cursor.fetchone()
+
+            return {
+                "games": row["games"],
+                "wins": row["wins"],
+                "avg": round(float(row["avg"]), 1)
+                    if row["avg"] is not None else 0,
+                "best": row["best"] if row["best"] is not None else 0
+            }
