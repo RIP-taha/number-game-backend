@@ -1,3 +1,4 @@
+
 from flask import Flask, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_socketio import SocketIO, join_room, emit
@@ -70,7 +71,7 @@ def register():
         }), 400
 
     username = username.strip()
-    email = email.strip()
+    email = email.strip().lower()
 
     if not username or not email or not password:
         return jsonify({
@@ -211,18 +212,31 @@ def save_result():
         or rank < 1
         or players_count < 1
         or rounds < 1
+        or rank > players_count
     ):
         return jsonify({
             "error": "اطلاعات نتیجه خارج از محدوده مجاز است!"
         }), 400
 
-    save_game_result(
-        user_id,
-        score,
-        rank,
-        players_count,
-        rounds
-    )
+    # جلوگیری از خطای ForeignKeyViolation
+    if not get_user_by_id(user_id):
+        return jsonify({
+            "error": "حساب کاربری موردنظر پیدا نشد!"
+        }), 404
+
+    try:
+        save_game_result(
+            user_id,
+            score,
+            rank,
+            players_count,
+            rounds
+        )
+    except Exception:
+        app.logger.exception("Error saving game result")
+        return jsonify({
+            "error": "ذخیره نتیجه بازی با مشکل مواجه شد!"
+        }), 500
 
     return jsonify({
         "message": "نتیجه ذخیره شد!"
@@ -231,6 +245,11 @@ def save_result():
 
 @app.route("/api/results/<int:user_id>", methods=["GET"])
 def get_results(user_id):
+    if not get_user_by_id(user_id):
+        return jsonify({
+            "error": "کاربر پیدا نشد!"
+        }), 404
+
     return jsonify({
         "results": get_user_results(user_id)
     }), 200
@@ -238,6 +257,11 @@ def get_results(user_id):
 
 @app.route("/api/stats/<int:user_id>", methods=["GET"])
 def get_stats(user_id):
+    if not get_user_by_id(user_id):
+        return jsonify({
+            "error": "کاربر پیدا نشد!"
+        }), 404
+
     return jsonify({
         "stats": get_user_stats(user_id)
     }), 200
@@ -307,9 +331,7 @@ def get_new_question():
 def emit_game_state(room_code):
     """
     ارسال نسخه امن وضعیت بازی به اعضای اتاق.
-
     عددهای دست جاری تا پایان آن دست مخفی می‌مانند.
-    اطلاعات اصلی بازی در سرور تغییر نمی‌کند.
     """
 
     game = games_data.get(room_code)
@@ -317,17 +339,16 @@ def emit_game_state(room_code):
     if game is None:
         return
 
-    # روی یک کپی کار می‌کنیم تا عددهای واقعی بازی
-    # در حافظه سرور دست‌نخورده باقی بمانند.
     public_game = copy.deepcopy(game)
+
+    # شناسه حساب کاربران نباید به مرورگر ارسال شود.
+    for player in public_game["players"]:
+        player.pop("user_id", None)
 
     current_round = public_game["current_round"]
     num_rounds = public_game["num_rounds"]
     game_over = public_game.get("game_over", False)
 
-    # در طول بازی، عددهای دست جاری برای همه مخفی‌اند.
-    # پس از پایان دست، current_round افزایش پیدا می‌کند
-    # و عددهای دست قبلی در وضعیت بعدی قابل مشاهده می‌شوند.
     if not game_over and current_round < num_rounds:
         for player in public_game["players"]:
             numbers = player.get("numbers", [])
@@ -375,9 +396,6 @@ def choose_bot_number(game, player, round_idx):
 
     if difficulty == "medium":
         return random.randint(1, 20)
-
-    # Hard: تلاش برای انتخاب عدد منحصربه‌فرد
-    # و قرار گرفتن در گروه کم‌تعدادتر.
 
     counts_low = sum(
         1 for number in previous_numbers
@@ -445,6 +463,62 @@ def apply_number_to_player(game, player_idx, number):
         game["question_answered"] = True
 
 
+# =========================
+# SAVE FINISHED GAME
+# =========================
+
+def save_finished_game(room_code):
+    """
+    ذخیره نتیجه بازیکنان واقعی در دیتابیس.
+    هر بازیکن فقط یک بار در هر بازی ثبت می‌شود.
+    """
+
+    game = games_data.get(room_code)
+
+    if not game:
+        return
+
+    saved_user_ids = game.setdefault("saved_user_ids", set())
+
+    real_user_ids = {
+        player["user_id"]
+        for player in game["players"]
+        if not player.get("is_bot") and player.get("user_id")
+    }
+
+    for rank, player in enumerate(game["players"], start=1):
+        user_id = player.get("user_id")
+
+        if player.get("is_bot") or not user_id:
+            continue
+
+        if user_id in saved_user_ids:
+            continue
+
+        try:
+            save_game_result(
+                user_id,
+                player["score"],
+                rank,
+                len(game["players"]),
+                game["num_rounds"]
+            )
+
+            saved_user_ids.add(user_id)
+
+            app.logger.info(
+                f"Game result saved: user_id={user_id}, "
+                f"score={player['score']}, rank={rank}"
+            )
+
+        except Exception:
+            app.logger.exception(
+                f"Could not save game result for user_id={user_id}"
+            )
+
+    game["results_saved"] = real_user_ids.issubset(saved_user_ids)
+
+
 def prepare_next_round_or_finish(room_code):
     """پایان راند و آماده‌سازی راند بعدی."""
 
@@ -457,6 +531,10 @@ def prepare_next_round_or_finish(room_code):
         game["current_question"] = None
         game["round_start_time"] = None
         game["question_answered"] = False
+
+        # ذخیره خودکار نتایج در دیتابیس
+        save_finished_game(room_code)
+
         return
 
     if game["rounds_with_math"][game["current_round"]]:
@@ -484,6 +562,9 @@ def process_automatic_bot_turns(room_code):
             game["game_over"] = True
             game["current_question"] = None
             game["round_start_time"] = None
+
+            save_finished_game(room_code)
+            emit_game_state(room_code)
             break
 
         if game["current_player_idx"] >= len(game["players"]):
@@ -512,6 +593,9 @@ def process_automatic_bot_turns(room_code):
             game["game_over"] = True
             game["current_question"] = None
             game["round_start_time"] = None
+
+            save_finished_game(room_code)
+            emit_game_state(room_code)
             break
 
         if game["current_player_idx"] >= len(game["players"]):
@@ -592,8 +676,6 @@ def handle_create_room(data):
             "message": "تعداد بات باید بین صفر تا پنج باشد!"
         })
         return
-
-    # تعداد بات‌ها در ظرفیت بازیکنان واقعی حساب نمی‌شود.
 
     if bot_difficulty not in VALID_BOT_DIFFICULTIES:
         bot_difficulty = "medium"
@@ -706,8 +788,6 @@ def handle_join_room(data):
         room=room_code
     )
 
-    # وضعیت بازی را فقط از تابع امن ارسال می‌کنیم.
-    # ارسال مستقیم games_data می‌توانست عددهای مخفی را افشا کند.
     if room_code in games_data:
         emit_game_state(room_code)
 
@@ -801,8 +881,14 @@ def handle_start_game(data):
     for player_name in players:
         is_bot = player_name in bot_names
 
+        user = None
+
+        if not is_bot:
+            user = get_user_by_username(player_name)
+
         game_players.append({
             "name": player_name,
+            "user_id": user["id"] if user else None,
             "score": 0,
             "numbers": [0] * num_rounds,
             "is_bot": is_bot
@@ -821,7 +907,9 @@ def handle_start_game(data):
             "bot_difficulty",
             "medium"
         ),
-        "game_over": False
+        "game_over": False,
+        "results_saved": False,
+        "saved_user_ids": set()
     }
 
     if rounds_with_math[0]:
@@ -873,6 +961,7 @@ def handle_submit_number(data):
 
     if game["current_round"] >= game["num_rounds"]:
         game["game_over"] = True
+        save_finished_game(room_code)
 
         emit("error", {
             "message": "این بازی به پایان رسیده است!"
@@ -995,4 +1084,3 @@ if __name__ == "__main__":
         port=port,
         allow_unsafe_werkzeug=True
     )
-
