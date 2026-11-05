@@ -1,16 +1,19 @@
-
 from flask import Flask, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_socketio import SocketIO, join_room, emit
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+
 from database import (
     init_database, create_user, get_user_by_username,
-    get_user_by_email, get_user_by_id, save_game_result,
-    get_user_results, get_user_stats
+    get_user_by_email, get_user_by_id, get_all_users,
+    save_game_result, get_user_results, get_user_stats
 )
+
 import random
 import os
 import time
 import copy
+
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get(
@@ -22,6 +25,15 @@ socketio = SocketIO(
     app,
     cors_allowed_origins="*",
     async_mode='gevent'
+)
+
+# تنظیمات توکن ورود
+TOKEN_MAX_AGE = 7 * 24 * 60 * 60
+TOKEN_SALT = "numora-admin-access"
+
+token_serializer = URLSafeTimedSerializer(
+    app.config["SECRET_KEY"],
+    salt=TOKEN_SALT
 )
 
 
@@ -38,6 +50,45 @@ def add_cors_headers(response):
 
 
 init_database()
+
+
+# =========================
+# AUTHENTICATION HELPERS
+# =========================
+
+def create_access_token(user_id):
+    """ساخت توکن امضاشده برای کاربر واردشده."""
+
+    return token_serializer.dumps({
+        "user_id": int(user_id)
+    })
+
+
+def get_authenticated_user():
+    """بررسی اعتبار توکن و دریافت کاربر از دیتابیس."""
+
+    auth_header = request.headers.get("Authorization", "")
+
+    if not auth_header.startswith("Bearer "):
+        return None
+
+    token = auth_header.split(" ", 1)[1].strip()
+
+    if not token:
+        return None
+
+    try:
+        payload = token_serializer.loads(
+            token,
+            max_age=TOKEN_MAX_AGE
+        )
+
+        user_id = int(payload.get("user_id"))
+
+    except (BadSignature, SignatureExpired, TypeError, ValueError):
+        return None
+
+    return get_user_by_id(user_id)
 
 
 # =========================
@@ -109,8 +160,11 @@ def register():
             "error": "خطا در ساخت حساب!"
         }), 500
 
+    access_token = create_access_token(user_id)
+
     return jsonify({
         "message": "ثبت‌نام موفق!",
+        "token": access_token,
         "user": {
             "id": user_id,
             "username": username,
@@ -153,8 +207,11 @@ def login():
             "error": "رمز عبور اشتباه است!"
         }), 401
 
+    access_token = create_access_token(user["id"])
+
     return jsonify({
         "message": "ورود موفق!",
+        "token": access_token,
         "user": {
             "id": user["id"],
             "username": user["username"],
@@ -175,8 +232,65 @@ def get_user(user_id):
     return jsonify({
         "id": user["id"],
         "username": user["username"],
-        "email": user["email"]
+        "email": user["email"],
+        "is_admin": bool(user["is_admin"])
     }), 200
+
+
+# =========================
+# ADMIN API
+# =========================
+
+@app.route("/api/admin/users", methods=["GET"])
+def admin_get_users():
+    """
+    دریافت فهرست حساب‌ها فقط برای مدیران.
+
+    هویت کاربر از توکن امضاشده بررسی می‌شود
+    و سطح دسترسی مستقیماً از دیتابیس خوانده می‌شود.
+    """
+
+    # کلید پیش‌فرض برای محیط واقعی امن نیست.
+    if app.config["SECRET_KEY"] == "change-this-secret-in-production":
+        return jsonify({
+            "error": "تنظیمات امنیتی سرور کامل نیست!"
+        }), 503
+
+    admin = get_authenticated_user()
+
+    if not admin:
+        return jsonify({
+            "error": "ابتدا وارد حساب کاربری شوید!"
+        }), 401
+
+    if not bool(admin["is_admin"]):
+        return jsonify({
+            "error": "شما اجازه دسترسی به این بخش را ندارید!"
+        }), 403
+
+    try:
+        users = get_all_users()
+
+        safe_users = []
+
+        for user in users:
+            safe_users.append({
+                "id": user["id"],
+                "username": user["username"],
+                "email": user["email"],
+                "is_admin": bool(user["is_admin"])
+            })
+
+        return jsonify({
+            "users": safe_users
+        }), 200
+
+    except Exception:
+        app.logger.exception("Error retrieving admin users")
+
+        return jsonify({
+            "error": "دریافت فهرست کاربران با مشکل مواجه شد!"
+        }), 500
 
 
 @app.route("/api/save-result", methods=["POST"])
