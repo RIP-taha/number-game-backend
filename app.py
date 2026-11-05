@@ -164,7 +164,7 @@ def register():
 
     return jsonify({
         "message": "ثبت‌نام موفق!",
-        "token": access_token,
+        "access_token": access_token,
         "user": {
             "id": user_id,
             "username": username,
@@ -211,7 +211,7 @@ def login():
 
     return jsonify({
         "message": "ورود موفق!",
-        "token": access_token,
+        "access_token": access_token,
         "user": {
             "id": user["id"],
             "username": user["username"],
@@ -1198,3 +1198,6 @@ if __name__ == "__main__":
         port=port,
         allow_unsafe_werkzeug=True
     )
+
+
+
