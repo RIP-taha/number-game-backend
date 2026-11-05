@@ -454,6 +454,7 @@ def emit_game_state(room_code):
         return
 
     public_game = copy.deepcopy(game)
+    public_game.pop("saved_user_ids", None)
 
     # شناسه حساب کاربران نباید به مرورگر ارسال شود.
     for player in public_game["players"]:
