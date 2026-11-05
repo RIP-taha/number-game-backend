@@ -455,6 +455,7 @@ def emit_game_state(room_code):
 
     public_game = copy.deepcopy(game)
     public_game.pop("saved_user_ids", None)
+    public_game.pop("math_submissions", None)
 
     # شناسه حساب کاربران نباید به مرورگر ارسال شود.
     for player in public_game["players"]:
@@ -463,6 +464,17 @@ def emit_game_state(room_code):
     current_round = public_game["current_round"]
     num_rounds = public_game["num_rounds"]
     game_over = public_game.get("game_over", False)
+
+    simultaneous_round = is_simultaneous_math_round(game)
+    public_game["is_simultaneous_round"] = simultaneous_round
+    public_game["submitted_players"] = (
+        list(game.get("math_submissions", {}).keys())
+        if simultaneous_round else []
+    )
+
+    # پاسخ صحیح سؤال نباید به مرورگر ارسال شود.
+    if public_game.get("current_question"):
+        public_game["current_question"].pop("answer", None)
 
     if not game_over and current_round < num_rounds:
         for player in public_game["players"]:
@@ -554,28 +566,50 @@ def choose_bot_number(game, player, round_idx):
     return random.randint(1, 20)
 
 
-def apply_number_to_player(game, player_idx, number):
-    """ثبت عدد و بررسی امتیاز سؤال ریاضی."""
+def is_simultaneous_math_round(game):
+    """بررسی اینکه دست فعلی از نوع سؤال ریاضی و هم‌زمان است یا نه."""
+
+    round_idx = game.get("current_round", 0)
+    rounds = game.get("rounds_with_math", [])
+
+    return (
+        round_idx < len(rounds)
+        and rounds[round_idx]
+        and game.get("current_question") is not None
+    )
+
+
+def record_math_submission(game, player_idx, number):
+    """ثبت پاسخ مستقل یک بازیکن در دست ریاضی."""
 
     round_idx = game["current_round"]
     player = game["players"][player_idx]
+    submissions = game.setdefault("math_submissions", {})
+
+    if player["name"] in submissions:
+        return False
+
+    elapsed = time.time() - game["round_start_time"]
+    time_limit = game["current_question"]["time_limit"]
+
+    if elapsed > time_limit or game.get("math_round_finished", False):
+        return False
 
     player["numbers"][round_idx] = number
+    submissions[player["name"]] = number
 
-    if (
-        game["rounds_with_math"][round_idx]
-        and game.get("current_question")
-        and not game.get("question_answered", False)
-    ):
-        elapsed = time.time() - game["round_start_time"]
+    if number == game["current_question"]["answer"]:
+        player["score"] += 2
 
-        if (
-            elapsed <= game["current_question"]["time_limit"]
-            and number == game["current_question"]["answer"]
-        ):
-            player["score"] += 2
+    return True
 
-        game["question_answered"] = True
+
+def apply_number_to_player(game, player_idx, number):
+    """ثبت عدد در دست‌های معمولی؛ دست ریاضی از مسیر هم‌زمان استفاده می‌کند."""
+
+    round_idx = game["current_round"]
+    player = game["players"][player_idx]
+    player["numbers"][round_idx] = number
 
 
 # =========================
@@ -634,22 +668,75 @@ def save_finished_game(room_code):
     game["results_saved"] = real_user_ids.issubset(saved_user_ids)
 
 
+def finish_math_round(room_code, expected_round=None, expected_start=None):
+    """پایان امن دست ریاضی پس از تمام شدن تایمر."""
+
+    game = games_data.get(room_code)
+
+    if not game or game.get("game_over"):
+        return False
+
+    if not is_simultaneous_math_round(game):
+        return False
+
+    if expected_round is not None and game["current_round"] != expected_round:
+        return False
+
+    if expected_start is not None and game.get("round_start_time") != expected_start:
+        return False
+
+    if game.get("math_round_finished", False):
+        return False
+
+    game["math_round_finished"] = True
+    prepare_next_round_or_finish(room_code)
+    emit_game_state(room_code)
+
+    if not game.get("game_over"):
+        socketio.start_background_task(
+            process_automatic_bot_turns,
+            room_code
+        )
+
+    return True
+
+
+def math_round_timer(room_code, round_idx, round_start):
+    """تایمر سرور؛ پایان دست برای همه بازیکنان هم‌زمان است."""
+
+    game = games_data.get(room_code)
+
+    if not game or not is_simultaneous_math_round(game):
+        return
+
+    time_limit = game["current_question"]["time_limit"]
+    remaining = max(0, time_limit - (time.time() - round_start))
+
+    if remaining:
+        socketio.sleep(remaining)
+
+    finish_math_round(
+        room_code,
+        expected_round=round_idx,
+        expected_start=round_start
+    )
+
+
 def prepare_next_round_or_finish(room_code):
     """پایان راند و آماده‌سازی راند بعدی."""
 
     game = games_data[room_code]
-
     end_round_logic(game)
+
+    game["math_submissions"] = {}
+    game["math_round_finished"] = False
 
     if game["current_round"] >= game["num_rounds"]:
         game["game_over"] = True
         game["current_question"] = None
         game["round_start_time"] = None
         game["question_answered"] = False
-
-        # ذخیره خودکار نتایج در دیتابیس
         save_finished_game(room_code)
-
         return
 
     if game["rounds_with_math"][game["current_round"]]:
@@ -657,6 +744,12 @@ def prepare_next_round_or_finish(room_code):
         game["round_start_time"] = time.time()
         game["question_answered"] = False
 
+        socketio.start_background_task(
+            math_round_timer,
+            room_code,
+            game["current_round"],
+            game["round_start_time"]
+        )
     else:
         game["current_question"] = None
         game["round_start_time"] = None
@@ -664,41 +757,9 @@ def prepare_next_round_or_finish(room_code):
 
 
 def process_automatic_bot_turns(room_code):
-    """اجرای خودکار نوبت‌های بات."""
+    """اجرای خودکار حرکت بات‌ها در دست‌های معمولی و ریاضی."""
 
-    game = games_data.get(room_code)
-
-    if not game or game.get("game_over"):
-        return
-
-    while not game.get("game_over"):
-
-        if game["current_round"] >= game["num_rounds"]:
-            game["game_over"] = True
-            game["current_question"] = None
-            game["round_start_time"] = None
-
-            save_finished_game(room_code)
-            emit_game_state(room_code)
-            break
-
-        if game["current_player_idx"] >= len(game["players"]):
-            prepare_next_round_or_finish(room_code)
-            emit_game_state(room_code)
-
-            if game.get("game_over"):
-                break
-
-            continue
-
-        current_idx = game["current_player_idx"]
-        current_player = game["players"][current_idx]
-
-        if not current_player.get("is_bot", False):
-            break
-
-        socketio.sleep(0.45)
-
+    while True:
         game = games_data.get(room_code)
 
         if not game or game.get("game_over"):
@@ -708,10 +769,68 @@ def process_automatic_bot_turns(room_code):
             game["game_over"] = True
             game["current_question"] = None
             game["round_start_time"] = None
-
             save_finished_game(room_code)
             emit_game_state(room_code)
-            break
+            return
+
+        # دست ریاضی: بات‌ها پاسخ مستقل می‌دهند و نوبت بازیکنان را جلو نمی‌برند.
+        if is_simultaneous_math_round(game):
+            round_idx = game["current_round"]
+
+            for player_idx, player in enumerate(game["players"]):
+                if not player.get("is_bot", False):
+                    continue
+
+                if player["name"] in game.get("math_submissions", {}):
+                    continue
+
+                socketio.sleep(0.45)
+
+                current_game = games_data.get(room_code)
+                if (
+                    not current_game
+                    or current_game.get("game_over")
+                    or current_game["current_round"] != round_idx
+                    or not is_simultaneous_math_round(current_game)
+                ):
+                    return
+
+                number = choose_bot_number(
+                    current_game,
+                    current_game["players"][player_idx],
+                    round_idx
+                )
+
+                if record_math_submission(current_game, player_idx, number):
+                    emit_game_state(room_code)
+
+            return
+
+        # دست معمولی: همان نوبت‌دهی قبلی حفظ می‌شود.
+        if game["current_player_idx"] >= len(game["players"]):
+            prepare_next_round_or_finish(room_code)
+            emit_game_state(room_code)
+
+            if game.get("game_over"):
+                return
+
+            continue
+
+        current_idx = game["current_player_idx"]
+        current_player = game["players"][current_idx]
+
+        if not current_player.get("is_bot", False):
+            return
+
+        socketio.sleep(0.45)
+
+        game = games_data.get(room_code)
+        if not game or game.get("game_over"):
+            return
+
+        # ممکن است در فاصله انتظار، وضعیت راند تغییر کرده باشد.
+        if is_simultaneous_math_round(game):
+            continue
 
         if game["current_player_idx"] >= len(game["players"]):
             continue
@@ -720,7 +839,7 @@ def process_automatic_bot_turns(room_code):
         current_player = game["players"][current_idx]
 
         if not current_player.get("is_bot", False):
-            break
+            return
 
         number = choose_bot_number(
             game,
@@ -728,12 +847,7 @@ def process_automatic_bot_turns(room_code):
             game["current_round"]
         )
 
-        apply_number_to_player(
-            game,
-            current_idx,
-            number
-        )
-
+        apply_number_to_player(game, current_idx, number)
         game["current_player_idx"] += 1
 
         if game["current_player_idx"] >= len(game["players"]):
@@ -1018,6 +1132,8 @@ def handle_start_game(data):
         "current_question": None,
         "round_start_time": None,
         "question_answered": False,
+        "math_submissions": {},
+        "math_round_finished": False,
         "bot_difficulty": room.get(
             "bot_difficulty",
             "medium"
@@ -1041,6 +1157,14 @@ def handle_start_game(data):
     )
 
     emit_game_state(room_code)
+
+    if is_simultaneous_math_round(games_data[room_code]):
+        socketio.start_background_task(
+            math_round_timer,
+            room_code,
+            games_data[room_code]["current_round"],
+            games_data[room_code]["round_start_time"]
+        )
 
     socketio.start_background_task(
         process_automatic_bot_turns,
@@ -1099,6 +1223,64 @@ def handle_submit_number(data):
         })
         return
 
+    if not isinstance(username, str) or not username.strip():
+        emit("error", {
+            "message": "نام کاربری معتبر نیست!"
+        })
+        return
+
+    username = username.strip()
+
+    # دست ریاضی: همه بازیکنان واقعی مستقل و هم‌زمان پاسخ می‌دهند.
+    if is_simultaneous_math_round(game):
+        if game.get("math_round_finished", False):
+            emit("error", {
+                "message": "زمان این سؤال به پایان رسیده است!"
+            })
+            return
+
+        player_idx = next(
+            (
+                index for index, player in enumerate(game["players"])
+                if player["name"] == username
+                and not player.get("is_bot", False)
+            ),
+            None
+        )
+
+        if player_idx is None:
+            emit("error", {
+                "message": "بازیکن شما در این بازی پیدا نشد!"
+            })
+            return
+
+        if username in game.get("math_submissions", {}):
+            emit("error", {
+                "message": "پاسخ شما قبلاً ثبت شده است!"
+            })
+            return
+
+        elapsed = time.time() - game["round_start_time"]
+        if elapsed > game["current_question"]["time_limit"]:
+            finish_math_round(
+                room_code,
+                expected_round=game["current_round"],
+                expected_start=game["round_start_time"]
+            )
+            emit("error", {
+                "message": "زمان پاسخ‌گویی به پایان رسیده است!"
+            })
+            return
+
+        if record_math_submission(game, player_idx, number):
+            emit_game_state(room_code)
+        else:
+            emit("error", {
+                "message": "پاسخ شما ثبت نشد؛ زمان سؤال تمام شده است!"
+            })
+        return
+
+    # دست معمولی: منطق نوبتی قبلی بدون تغییر باقی می‌ماند.
     if game["current_player_idx"] >= len(game["players"]):
         emit("error", {
             "message": "در حال آماده‌سازی دست بعدی هستیم!"
@@ -1120,12 +1302,7 @@ def handle_submit_number(data):
         })
         return
 
-    apply_number_to_player(
-        game,
-        player_idx,
-        number
-    )
-
+    apply_number_to_player(game, player_idx, number)
     game["current_player_idx"] += 1
 
     if game["current_player_idx"] >= len(game["players"]):
