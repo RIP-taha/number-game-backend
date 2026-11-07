@@ -1,12 +1,25 @@
+
 from flask import Flask, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_socketio import SocketIO, join_room, emit
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
 from database import (
-    init_database, create_user, get_user_by_username,
-    get_user_by_email, get_user_by_id, get_all_users,
-    save_game_result, get_user_results, get_user_stats
+    init_database,
+    create_user,
+    get_user_by_username,
+    get_user_by_email,
+    get_user_by_id,
+    get_all_users,
+    save_game_result,
+    get_user_results,
+    get_user_stats,
+    create_voice_message,
+    get_user_voice_messages,
+    get_all_voice_messages,
+    update_voice_message_status,
+    VALID_VOICE_CATEGORIES,
+    VALID_VOICE_STATUSES
 )
 
 import random
@@ -89,6 +102,38 @@ def get_authenticated_user():
         return None
 
     return get_user_by_id(user_id)
+
+
+def get_admin_user_or_error():
+    """بررسی هویت و سطح دسترسی مدیر."""
+
+    if app.config["SECRET_KEY"] == "change-this-secret-in-production":
+        return None, (
+            jsonify({
+                "error": "تنظیمات امنیتی سرور کامل نیست!"
+            }),
+            503
+        )
+
+    admin = get_authenticated_user()
+
+    if not admin:
+        return None, (
+            jsonify({
+                "error": "ابتدا وارد حساب کاربری شوید!"
+            }),
+            401
+        )
+
+    if not bool(admin["is_admin"]):
+        return None, (
+            jsonify({
+                "error": "شما اجازه دسترسی به این بخش را ندارید!"
+            }),
+            403
+        )
+
+    return admin, None
 
 
 # =========================
@@ -245,12 +290,8 @@ def get_user(user_id):
 def admin_get_users():
     """
     دریافت فهرست حساب‌ها فقط برای مدیران.
-
-    هویت کاربر از توکن امضاشده بررسی می‌شود
-    و سطح دسترسی مستقیماً از دیتابیس خوانده می‌شود.
     """
 
-    # کلید پیش‌فرض برای محیط واقعی امن نیست.
     if app.config["SECRET_KEY"] == "change-this-secret-in-production":
         return jsonify({
             "error": "تنظیمات امنیتی سرور کامل نیست!"
@@ -293,6 +334,248 @@ def admin_get_users():
         }), 500
 
 
+# =========================
+# NUMORA VOICE API
+# =========================
+
+@app.route("/api/voice/messages", methods=["POST"])
+def submit_voice_message():
+    user = get_authenticated_user()
+
+    if not user:
+        return jsonify({
+            "error": "ابتدا وارد حساب کاربری شوید!"
+        }), 401
+
+    data = request.get_json(silent=True)
+
+    if not isinstance(data, dict):
+        return jsonify({
+            "error": "داده‌های ارسالی معتبر نیستند!"
+        }), 400
+
+    category = data.get("category")
+    subject = data.get("subject", "")
+    message = data.get("message", "")
+
+    if not isinstance(category, str):
+        return jsonify({
+            "error": "دسته‌بندی معتبر نیست!"
+        }), 400
+
+    category = category.strip()
+
+    if category not in VALID_VOICE_CATEGORIES:
+        return jsonify({
+            "error": "دسته‌بندی انتخاب‌شده معتبر نیست!"
+        }), 400
+
+    if not isinstance(subject, str) or not isinstance(message, str):
+        return jsonify({
+            "error": "عنوان یا متن پیام معتبر نیست!"
+        }), 400
+
+    subject = subject.strip()
+    message = message.strip()
+
+    if len(subject) > 100:
+        return jsonify({
+            "error": "عنوان پیام نباید بیشتر از ۱۰۰ کاراکتر باشد!"
+        }), 400
+
+    if len(message) < 10 or len(message) > 2000:
+        return jsonify({
+            "error": "متن پیام باید بین ۱۰ تا ۲۰۰۰ کاراکتر باشد!"
+        }), 400
+
+    try:
+        saved_message = create_voice_message(
+            user["id"],
+            category,
+            subject or None,
+            message
+        )
+
+        return jsonify({
+            "message": "پیام شما با موفقیت ثبت شد!",
+            "voice_message": saved_message
+        }), 201
+
+    except Exception:
+        app.logger.exception("Error creating voice message")
+
+        return jsonify({
+            "error": "ثبت پیام با مشکل مواجه شد!"
+        }), 500
+
+
+@app.route("/api/voice/messages", methods=["GET"])
+def get_my_voice_messages():
+    user = get_authenticated_user()
+
+    if not user:
+        return jsonify({
+            "error": "ابتدا وارد حساب کاربری شوید!"
+        }), 401
+
+    try:
+        messages = get_user_voice_messages(user["id"])
+
+        return jsonify({
+            "messages": messages,
+            "total": len(messages)
+        }), 200
+
+    except Exception:
+        app.logger.exception("Error retrieving user voice messages")
+
+        return jsonify({
+            "error": "دریافت پیام‌ها با مشکل مواجه شد!"
+        }), 500
+
+
+@app.route("/api/admin/voice/messages", methods=["GET"])
+def admin_get_voice_messages():
+    admin, error = get_admin_user_or_error()
+
+    if error:
+        return error
+
+    category = request.args.get("category")
+    status = request.args.get("status")
+
+    if category:
+        category = category.strip()
+
+        if category not in VALID_VOICE_CATEGORIES:
+            return jsonify({
+                "error": "فیلتر دسته‌بندی معتبر نیست!"
+            }), 400
+
+    if status:
+        status = status.strip()
+
+        if status not in VALID_VOICE_STATUSES:
+            return jsonify({
+                "error": "فیلتر وضعیت معتبر نیست!"
+            }), 400
+
+    try:
+        messages = get_all_voice_messages(
+            category=category,
+            status=status
+        )
+
+        return jsonify({
+            "messages": messages,
+            "total": len(messages)
+        }), 200
+
+    except Exception:
+        app.logger.exception("Error retrieving admin voice messages")
+
+        return jsonify({
+            "error": "دریافت پیام‌ها با مشکل مواجه شد!"
+        }), 500
+
+
+@app.route(
+    "/api/admin/voice/users/<int:user_id>/messages",
+    methods=["GET"]
+)
+def admin_get_user_voice_history(user_id):
+    admin, error = get_admin_user_or_error()
+
+    if error:
+        return error
+
+    user = get_user_by_id(user_id)
+
+    if not user:
+        return jsonify({
+            "error": "کاربر پیدا نشد!"
+        }), 404
+
+    try:
+        messages = get_user_voice_messages(user_id)
+
+        return jsonify({
+            "messages": messages,
+            "total": len(messages),
+            "user": {
+                "id": user["id"],
+                "username": user["username"],
+                "email": user["email"]
+            }
+        }), 200
+
+    except Exception:
+        app.logger.exception("Error retrieving user voice history")
+
+        return jsonify({
+            "error": "دریافت تاریخچه کاربر با مشکل مواجه شد!"
+        }), 500
+
+
+@app.route(
+    "/api/admin/voice/messages/<int:message_id>",
+    methods=["PUT"]
+)
+def admin_update_voice_message(message_id):
+    admin, error = get_admin_user_or_error()
+
+    if error:
+        return error
+
+    data = request.get_json(silent=True)
+
+    if not isinstance(data, dict):
+        return jsonify({
+            "error": "داده‌های ارسالی معتبر نیستند!"
+        }), 400
+
+    status = data.get("status")
+
+    if not isinstance(status, str):
+        return jsonify({
+            "error": "وضعیت پیام معتبر نیست!"
+        }), 400
+
+    status = status.strip()
+
+    if status not in VALID_VOICE_STATUSES:
+        return jsonify({
+            "error": "وضعیت انتخاب‌شده معتبر نیست!"
+        }), 400
+
+    try:
+        updated_message = update_voice_message_status(
+            message_id,
+            status
+        )
+
+        if not updated_message:
+            return jsonify({
+                "error": "پیام موردنظر پیدا نشد!"
+            }), 404
+
+        return jsonify({
+            "message": "وضعیت پیام با موفقیت تغییر کرد!",
+            "voice_message": updated_message
+        }), 200
+
+    except Exception:
+        app.logger.exception("Error updating voice message status")
+
+        return jsonify({
+            "error": "تغییر وضعیت پیام با مشکل مواجه شد!"
+        }), 500
+
+
+# =========================
+# GAME RESULTS
+# =========================
+
 @app.route("/api/save-result", methods=["POST"])
 def save_result():
     data = request.get_json(silent=True)
@@ -332,7 +615,6 @@ def save_result():
             "error": "اطلاعات نتیجه خارج از محدوده مجاز است!"
         }), 400
 
-    # جلوگیری از خطای ForeignKeyViolation
     if not get_user_by_id(user_id):
         return jsonify({
             "error": "حساب کاربری موردنظر پیدا نشد!"
@@ -457,7 +739,6 @@ def emit_game_state(room_code):
     public_game.pop("saved_user_ids", None)
     public_game.pop("math_submissions", None)
 
-    # شناسه حساب کاربران نباید به مرورگر ارسال شود.
     for player in public_game["players"]:
         player.pop("user_id", None)
 
@@ -472,7 +753,6 @@ def emit_game_state(room_code):
         if simultaneous_round else []
     )
 
-    # پاسخ صحیح سؤال نباید به مرورگر ارسال شود.
     if public_game.get("current_question"):
         public_game["current_question"].pop("answer", None)
 
@@ -605,7 +885,7 @@ def record_math_submission(game, player_idx, number):
 
 
 def apply_number_to_player(game, player_idx, number):
-    """ثبت عدد در دست‌های معمولی؛ دست ریاضی از مسیر هم‌زمان استفاده می‌کند."""
+    """ثبت عدد در دست‌های معمولی."""
 
     round_idx = game["current_round"]
     player = game["players"][player_idx]
@@ -757,7 +1037,7 @@ def prepare_next_round_or_finish(room_code):
 
 
 def process_automatic_bot_turns(room_code):
-    """اجرای خودکار حرکت بات‌ها در دست‌های معمولی و ریاضی."""
+    """اجرای خودکار حرکت بات‌ها."""
 
     while True:
         game = games_data.get(room_code)
@@ -773,7 +1053,6 @@ def process_automatic_bot_turns(room_code):
             emit_game_state(room_code)
             return
 
-        # دست ریاضی: بات‌ها پاسخ مستقل می‌دهند و نوبت بازیکنان را جلو نمی‌برند.
         if is_simultaneous_math_round(game):
             round_idx = game["current_round"]
 
@@ -787,6 +1066,7 @@ def process_automatic_bot_turns(room_code):
                 socketio.sleep(0.45)
 
                 current_game = games_data.get(room_code)
+
                 if (
                     not current_game
                     or current_game.get("game_over")
@@ -806,7 +1086,6 @@ def process_automatic_bot_turns(room_code):
 
             return
 
-        # دست معمولی: همان نوبت‌دهی قبلی حفظ می‌شود.
         if game["current_player_idx"] >= len(game["players"]):
             prepare_next_round_or_finish(room_code)
             emit_game_state(room_code)
@@ -825,10 +1104,10 @@ def process_automatic_bot_turns(room_code):
         socketio.sleep(0.45)
 
         game = games_data.get(room_code)
+
         if not game or game.get("game_over"):
             return
 
-        # ممکن است در فاصله انتظار، وضعیت راند تغییر کرده باشد.
         if is_simultaneous_math_round(game):
             continue
 
@@ -1261,12 +1540,14 @@ def handle_submit_number(data):
             return
 
         elapsed = time.time() - game["round_start_time"]
+
         if elapsed > game["current_question"]["time_limit"]:
             finish_math_round(
                 room_code,
                 expected_round=game["current_round"],
                 expected_start=game["round_start_time"]
             )
+
             emit("error", {
                 "message": "زمان پاسخ‌گویی به پایان رسیده است!"
             })
@@ -1278,9 +1559,10 @@ def handle_submit_number(data):
             emit("error", {
                 "message": "پاسخ شما ثبت نشد؛ زمان سؤال تمام شده است!"
             })
+
         return
 
-    # دست معمولی: منطق نوبتی قبلی بدون تغییر باقی می‌ماند.
+    # دست معمولی: منطق نوبتی قبلی
     if game["current_player_idx"] >= len(game["players"]):
         emit("error", {
             "message": "در حال آماده‌سازی دست بعدی هستیم!"
@@ -1376,6 +1658,3 @@ if __name__ == "__main__":
         port=port,
         allow_unsafe_werkzeug=True
     )
-
-
-

@@ -28,6 +28,7 @@ def init_database():
     with get_connection() as conn:
         with conn.cursor() as cursor:
 
+            # USERS
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     id BIGSERIAL PRIMARY KEY,
@@ -45,6 +46,7 @@ def init_database():
                 BOOLEAN NOT NULL DEFAULT FALSE
             """)
 
+            # GAME RESULTS
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS game_results (
                     id BIGSERIAL PRIMARY KEY,
@@ -66,6 +68,51 @@ def init_database():
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_game_results_played_at
                 ON game_results(played_at DESC)
+            """)
+
+            # NUMORA VOICE
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS voice_messages (
+                    id BIGSERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL
+                        REFERENCES users(id) ON DELETE CASCADE,
+                    category TEXT NOT NULL
+                        CHECK (
+                            category IN (
+                                'suggestion',
+                                'criticism',
+                                'bug',
+                                'feedback'
+                            )
+                        ),
+                    subject VARCHAR(100),
+                    message TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'new'
+                        CHECK (
+                            status IN (
+                                'new',
+                                'reviewed',
+                                'replied',
+                                'archived'
+                            )
+                        ),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_voice_messages_user_id
+                ON voice_messages(user_id)
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_voice_messages_created_at
+                ON voice_messages(created_at DESC)
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_voice_messages_status
+                ON voice_messages(status)
             """)
 
 
@@ -235,3 +282,137 @@ def get_user_stats(user_id):
                     if row["best"] is not None else 0
                 )
             }
+
+
+# =========================
+# NUMORA VOICE
+# =========================
+
+VALID_VOICE_CATEGORIES = {
+    "suggestion",
+    "criticism",
+    "bug",
+    "feedback"
+}
+
+VALID_VOICE_STATUSES = {
+    "new",
+    "reviewed",
+    "replied",
+    "archived"
+}
+
+
+def create_voice_message(user_id, category, subject, message):
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO voice_messages (
+                    user_id,
+                    category,
+                    subject,
+                    message
+                )
+                VALUES (%s, %s, %s, %s)
+                RETURNING
+                    id,
+                    user_id,
+                    category,
+                    subject,
+                    message,
+                    status,
+                    created_at
+            """, (
+                user_id,
+                category,
+                subject,
+                message
+            ))
+
+            return dict(cursor.fetchone())
+
+
+def get_user_voice_messages(user_id, limit=200):
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT
+                    id,
+                    user_id,
+                    category,
+                    subject,
+                    message,
+                    status,
+                    created_at
+                FROM voice_messages
+                WHERE user_id = %s
+                ORDER BY created_at DESC, id DESC
+                LIMIT %s
+            """, (user_id, limit))
+
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+
+def get_all_voice_messages(category=None, status=None):
+    conditions = []
+    params = []
+
+    if category:
+        conditions.append("vm.category = %s")
+        params.append(category)
+
+    if status:
+        conditions.append("vm.status = %s")
+        params.append(status)
+
+    where_clause = (
+        "WHERE " + " AND ".join(conditions)
+        if conditions else ""
+    )
+
+    query = f"""
+        SELECT
+            vm.id,
+            vm.user_id,
+            vm.category,
+            vm.subject,
+            vm.message,
+            vm.status,
+            vm.created_at,
+            u.username,
+            u.email
+        FROM voice_messages vm
+        JOIN users u ON u.id = vm.user_id
+        {where_clause}
+        ORDER BY vm.created_at DESC, vm.id DESC
+        LIMIT 500
+    """
+
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(query, params)
+
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+
+def update_voice_message_status(message_id, status):
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                UPDATE voice_messages
+                SET status = %s
+                WHERE id = %s
+                RETURNING
+                    id,
+                    user_id,
+                    category,
+                    subject,
+                    message,
+                    status,
+                    created_at
+            """, (status, message_id))
+
+            row = cursor.fetchone()
+            return dict(row) if row else None
