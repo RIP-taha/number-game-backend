@@ -416,3 +416,4 @@ def update_voice_message_status(message_id, status):
 
             row = cursor.fetchone()
             return dict(row) if row else None
+
