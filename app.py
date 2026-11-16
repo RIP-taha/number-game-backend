@@ -280,7 +280,23 @@ def get_user(user_id):
         "email": user["email"],
         "is_admin": bool(user["is_admin"])
     }), 200
+@app.route("/api/me/admin-status", methods=["GET"])
+def get_my_admin_status():
+    if app.config["SECRET_KEY"] == "change-this-secret-in-production":
+        return jsonify({
+            "error": "Server security configuration is incomplete."
+        }), 503
 
+    user = get_authenticated_user()
+
+    if not user:
+        return jsonify({
+            "error": "Please log in first."
+        }), 401
+
+    return jsonify({
+        "is_admin": bool(user["is_admin"])
+    }), 200
 
 # =========================
 # ADMIN API
