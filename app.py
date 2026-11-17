@@ -64,6 +64,10 @@ def add_cors_headers(response):
 
 init_database()
 
+from friends import friends_bp, init_friends_tables
+
+init_friends_tables()
+app.register_blueprint(friends_bp)
 
 # =========================
 # AUTHENTICATION HELPERS
